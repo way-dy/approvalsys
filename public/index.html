@@ -5,14 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>동영관광 프리미엄 결재 시스템</title>
     
-    <!-- Tailwind CSS (Premium Design) -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
-    <!-- Icons -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     
-    <!-- Firebase SDK (Modular) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
@@ -22,15 +18,14 @@
         // ------------------------------------------------------------------
         // [설정] Firebase 설정 정보를 이곳에 입력하세요.
         // ------------------------------------------------------------------
-const firebaseConfig = {
-  apiKey: "AIzaSyAI_xl2HGC33VUA2synrNa23q448-pe0qQ",
-  authDomain: "approval-8ef73.firebaseapp.com",
-  projectId: "approval-8ef73",
-  storageBucket: "approval-8ef73.firebasestorage.app",
-  messagingSenderId: "32568902630",
-  appId: "1:32568902630:web:176466a05952ea44cccc27"
-};
-
+        const firebaseConfig = {
+          apiKey: "AIzaSyAI_xl2HGC33VUA2synrNa23q448-pe0qQ",
+          authDomain: "approval-8ef73.firebaseapp.com",
+          projectId: "approval-8ef73",
+          storageBucket: "approval-8ef73.firebasestorage.app",
+          messagingSenderId: "32568902630",
+          appId: "1:32568902630:web:176466a05952ea44cccc27"
+        };
 
         // Firebase 초기화
         const app = initializeApp(firebaseConfig);
@@ -62,7 +57,7 @@ const firebaseConfig = {
                             name: matchedUser.name,
                             team: matchedUser.team || '',
                             role: matchedUser.role || '일반',
-                            confidentialAccess: matchedUser.confidentialAccess // 대외비 권한 (Code.gs에서 '대외비'도 true로 넘어옴)
+                            confidentialAccess: matchedUser.confidentialAccess // 대외비 권한
                         };
                     } else {
                         currentUser = {
@@ -85,11 +80,11 @@ const firebaseConfig = {
                         document.getElementById('nav-accounting').classList.remove('hidden');
                     }
                     
-                    // [중요] 대외비 메뉴 표시 로직 강화
+                    // 대외비 메뉴 표시 로직
                     if (currentUser.role === '대표' || currentUser.confidentialAccess) {
                          document.querySelectorAll('.confidential-menu').forEach(el => {
                              el.classList.remove('hidden');
-                             el.classList.add('flex'); // hidden 제거 후 flex 복구
+                             el.classList.add('flex');
                          });
                     }
 
@@ -193,7 +188,6 @@ const firebaseConfig = {
                     return !isConfidential;
 
                 case 'allConfidentialDrafts':
-                    // [확인] 대외비 접근 권한이 있어야만 전체 대외비 문서 열람 가능
                     return canViewConfidential && isConfidential;
                 
                 case 'accounting':
@@ -488,6 +482,15 @@ const firebaseConfig = {
                 `;
             }
 
+            // [추가] 최종 결재 완료 시 인쇄 버튼 표시
+            if (draft.approval2Status === '결재') {
+                btnArea.innerHTML += `
+                    <button onclick="window.print()" class="bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-800 ml-2 flex items-center gap-2">
+                        <i class="bi bi-printer"></i> 인쇄
+                    </button>
+                `;
+            }
+
             const paymentArea = document.getElementById('detail-payment-area');
             paymentArea.classList.add('hidden');
             
@@ -594,17 +597,53 @@ const firebaseConfig = {
         ::-webkit-scrollbar-track { background: #f1f1f1; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* [추가] 인쇄 전용 스타일 */
+        @media print {
+            /* 모든 요소 숨김 */
+            body * {
+                visibility: hidden;
+            }
+            
+            /* 모달 내용만 표시 */
+            #modal-detail, #modal-detail * {
+                visibility: visible;
+            }
+
+            /* 모달 위치 및 크기 조정 */
+            #modal-detail {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: auto;
+                margin: 0;
+                padding: 0;
+                background: white;
+                box-shadow: none !important;
+                overflow: visible !important; /* 스크롤 내용 전체 표시 */
+            }
+
+            /* 모달 내부의 스크롤 영역 해제 */
+            #modal-detail .overflow-y-auto {
+                overflow: visible !important;
+                height: auto !important;
+            }
+
+            /* 인쇄 시 불필요한 요소(버튼, 닫기 아이콘, 배경 등) 숨김 */
+            [data-close-modal], #detail-actions, .bg-black\/40, #loading-overlay {
+                display: none !important;
+            }
+        }
     </style>
 </head>
 <body>
 
-    <!-- Loading Overlay -->
     <div id="loading-overlay" class="fixed inset-0 bg-white/90 z-50 flex flex-col justify-center items-center backdrop-blur-sm transition-opacity hidden">
         <div class="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mb-4"></div>
         <p class="text-gray-600 font-medium">로딩중...</p>
     </div>
 
-    <!-- Login View -->
     <div id="login-view" class="h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 hidden">
         <div class="bg-white p-10 rounded-2xl shadow-2xl text-center max-w-md w-full border border-white/50">
             <div class="mb-8">
@@ -621,10 +660,8 @@ const firebaseConfig = {
         </div>
     </div>
 
-    <!-- App View -->
     <div id="app-view" class="hidden flex h-screen overflow-hidden">
         
-        <!-- Sidebar -->
         <aside class="w-64 bg-white border-r border-gray-200 flex flex-col z-10 shadow-lg">
             <div class="p-6 border-b border-gray-100">
                 <div class="flex items-center gap-3 text-blue-700 font-bold text-xl">
@@ -677,9 +714,7 @@ const firebaseConfig = {
             </div>
         </aside>
 
-        <!-- Main Content -->
         <main class="flex-1 flex flex-col min-w-0 bg-gray-50/50">
-            <!-- Header -->
             <header class="bg-white border-b border-gray-200 h-16 flex items-center justify-between px-8 shadow-sm">
                 <h2 id="page-title" class="text-xl font-bold text-gray-800">내가 올린 기안</h2>
                 <div class="flex gap-3">
@@ -692,13 +727,11 @@ const firebaseConfig = {
                 </div>
             </header>
 
-            <!-- Content Area -->
             <div id="draft-list-container" class="flex-1 overflow-y-auto p-8">
             </div>
         </main>
     </div>
 
-    <!-- Modal: New Draft / Edit Draft -->
     <div id="modal-draft" class="fixed inset-0 z-50 hidden">
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" data-close-modal="modal-draft"></div>
         <div class="absolute inset-y-0 right-0 w-full max-w-2xl bg-white shadow-2xl flex flex-col animate-slide-in">
@@ -784,7 +817,6 @@ const firebaseConfig = {
         </div>
     </div>
 
-    <!-- Modal: Detail View -->
     <div id="modal-detail" class="fixed inset-0 z-50 hidden">
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" data-close-modal="modal-detail"></div>
         <div class="absolute inset-0 m-auto max-w-4xl max-h-[90vh] bg-white rounded-xl shadow-2xl flex flex-col overflow-hidden">
@@ -797,10 +829,8 @@ const firebaseConfig = {
             </div>
             
             <div class="flex-1 overflow-y-auto p-8">
-                <!-- Info Grid -->
                 <div id="detail-info" class="flex flex-wrap text-sm text-gray-600 mb-6 pb-6 border-b"></div>
 
-                <!-- Approval Line -->
                 <div class="flex items-center justify-center gap-4 mb-8 bg-gray-50 p-6 rounded-xl border border-gray-100">
                     <div class="text-center">
                         <div class="font-bold text-sm">기안</div>
@@ -812,16 +842,13 @@ const firebaseConfig = {
                     <div id="detail-appr2" class="text-center min-w-[80px]"></div>
                 </div>
 
-                <!-- Content -->
                 <div id="detail-content" class="prose max-w-none mb-8 min-h-[200px] border p-4 rounded-lg"></div>
 
-                <!-- Links & Attachments -->
                 <div class="space-y-4">
                     <div id="detail-links"></div>
                     <div id="detail-files" class="flex flex-wrap"></div>
                 </div>
 
-                <!-- Accounting Section -->
                 <div id="detail-payment-area" class="mt-8 pt-6 border-t border-dashed border-gray-300 hidden">
                     <h4 class="font-bold text-gray-800 mb-3"><i class="bi bi-wallet2"></i> 회계팀 처리</h4>
                     <div id="repair-cost-display" class="mb-3 text-sm"></div>
