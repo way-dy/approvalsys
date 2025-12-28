@@ -15,9 +15,7 @@
         import { getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, query, where, orderBy, runTransaction, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
         import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js";
 
-        // ------------------------------------------------------------------
-        // [설정] Firebase 설정 정보를 이곳에 입력하세요.
-        // ------------------------------------------------------------------
+        // Firebase 설정
         const firebaseConfig = {
           apiKey: "AIzaSyAI_xl2HGC33VUA2synrNa23q448-pe0qQ",
           authDomain: "approval-8ef73.firebaseapp.com",
@@ -27,14 +25,12 @@
           appId: "1:32568902630:web:176466a05952ea44cccc27"
         };
 
-        // Firebase 초기화
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
         const storage = getStorage(app);
         const provider = new GoogleAuthProvider();
 
-        // 전역 변수
         let currentUser = null;
         let userList = [];
         let repairMap = {};
@@ -52,51 +48,26 @@
                     
                     const matchedUser = userList.find(u => u.email === user.email);
                     if (matchedUser) {
-                        currentUser = {
-                            ...user,
-                            name: matchedUser.name,
-                            team: matchedUser.team || '',
-                            role: matchedUser.role || '일반',
-                            confidentialAccess: matchedUser.confidentialAccess // 대외비 권한
-                        };
+                        currentUser = { ...user, name: matchedUser.name, team: matchedUser.team || '', role: matchedUser.role || '일반', confidentialAccess: matchedUser.confidentialAccess };
                     } else {
-                        currentUser = {
-                            ...user,
-                            name: user.displayName,
-                            team: '',
-                            role: '미등록',
-                            confidentialAccess: false
-                        };
+                        currentUser = { ...user, name: user.displayName, team: '', role: '미등록', confidentialAccess: false };
                     }
 
                     renderUserInfo();
                     toggleView('app-view');
-                    
-                    // 초기 데이터 로드
                     loadDrafts('myDrafts');
                     
-                    // 메뉴 표시 로직
-                    if (currentUser.team === '회계팀') {
-                        document.getElementById('nav-accounting').classList.remove('hidden');
-                    }
-                    
-                    // 대외비 메뉴 표시 로직
+                    if (currentUser.team === '회계팀') document.getElementById('nav-accounting').classList.remove('hidden');
                     if (currentUser.role === '대표' || currentUser.confidentialAccess) {
-                         document.querySelectorAll('.confidential-menu').forEach(el => {
-                             el.classList.remove('hidden');
-                             el.classList.add('flex');
-                         });
+                         document.querySelectorAll('.confidential-menu').forEach(el => { el.classList.remove('hidden'); el.classList.add('flex'); });
                     }
-
                     hideLoading();
-
                 } else {
                     currentUser = null;
                     toggleView('login-view');
                 }
             });
 
-            // 이벤트 리스너들
             document.getElementById('btn-login').addEventListener('click', () => signInWithPopup(auth, provider));
             document.getElementById('btn-logout').addEventListener('click', () => signOut(auth));
             document.getElementById('btn-new-draft').addEventListener('click', openNewDraftModal);
@@ -106,12 +77,33 @@
                 loadDrafts(activeTab);
             });
             
+            // 모바일 메뉴 토글 로직
+            const sidebar = document.getElementById('main-sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            
+            window.toggleSidebar = () => {
+                const isClosed = sidebar.classList.contains('-translate-x-full');
+                if (isClosed) {
+                    sidebar.classList.remove('-translate-x-full'); // 열기
+                    overlay.classList.remove('hidden');
+                } else {
+                    sidebar.classList.add('-translate-x-full'); // 닫기
+                    overlay.classList.add('hidden');
+                }
+            };
+
+            // 메뉴 아이템 클릭 시 모바일 메뉴 자동 닫기
             document.querySelectorAll('.nav-item').forEach(item => {
                 item.addEventListener('click', (e) => {
                     document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active', 'bg-blue-50', 'text-blue-600'));
                     e.currentTarget.classList.add('active', 'bg-blue-50', 'text-blue-600');
                     const target = e.currentTarget.dataset.target;
                     loadDrafts(target);
+                    
+                    // 모바일이면 닫기
+                    if (window.innerWidth < 768) {
+                        window.toggleSidebar();
+                    }
                 });
             });
 
@@ -122,105 +114,57 @@
             document.getElementById('btn-save-draft').addEventListener('click', saveDraft);
         }
 
+        // --- (기존 로직 함수들은 그대로 유지) ---
         async function syncMetaData() {
             try {
                 const usersDoc = await getDoc(doc(db, 'meta', 'users'));
-                if (usersDoc.exists()) {
-                    userList = usersDoc.data().list || [];
-                    updateApproverList();
-                }
+                if (usersDoc.exists()) { userList = usersDoc.data().list || []; updateApproverList(); }
                 const repairDoc = await getDoc(doc(db, 'meta', 'repairMap'));
-                if (repairDoc.exists()) {
-                    repairMap = repairDoc.data().map || {};
-                }
-            } catch (error) {
-                console.error("메타 데이터 로드 실패:", error);
-                showToast("시스템 데이터를 불러오는데 실패했습니다.", true);
-            }
+                if (repairDoc.exists()) { repairMap = repairDoc.data().map || {}; }
+            } catch (error) { console.error(error); }
         }
 
         async function loadDrafts(listType) {
             const listContainer = document.getElementById('draft-list-container');
             listContainer.innerHTML = '<div class="flex justify-center p-10"><div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div></div>';
-            
             document.getElementById('page-title').textContent = getTitleByListType(listType);
 
             try {
                 const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'));
                 const querySnapshot = await getDocs(q);
-                
                 let drafts = [];
-                querySnapshot.forEach((doc) => {
-                    drafts.push({ id: doc.id, ...doc.data() });
-                });
-
+                querySnapshot.forEach((doc) => { drafts.push({ id: doc.id, ...doc.data() }); });
                 const filteredDrafts = drafts.filter(draft => filterDraft(draft, listType));
                 renderDrafts(filteredDrafts);
-
             } catch (error) {
-                console.error("기안 로드 실패:", error);
-                listContainer.innerHTML = `<div class="text-center p-10 text-gray-500">데이터를 불러오지 못했습니다.<br>${error.message}</div>`;
+                console.error(error);
+                listContainer.innerHTML = `<div class="text-center p-10 text-gray-500">데이터 로드 실패<br>${error.message}</div>`;
             }
         }
 
         function filterDraft(draft, listType) {
             const isConfidential = draft.category === '대외비';
             const canViewConfidential = currentUser.role === '대표' || currentUser.confidentialAccess;
-
             switch (listType) {
-                case 'myDrafts':
-                    return draft.drafterEmail === currentUser.email;
-
-                case 'toApprove':
-                    return !isConfidential && (
-                        (draft.approver1Email === currentUser.email && !draft.approval1Status) ||
-                        (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status)
-                    );
-
-                case 'toApproveConfidential':
-                    if (!canViewConfidential) return false;
-                    return isConfidential && (
-                        (draft.approver1Email === currentUser.email && !draft.approval1Status) ||
-                        (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status)
-                    );
-
-                case 'allDrafts':
-                    return !isConfidential;
-
-                case 'allConfidentialDrafts':
-                    return canViewConfidential && isConfidential;
-                
-                case 'accounting':
-                    if (currentUser.team !== '회계팀') return false;
-                    if (draft.category === '대외비' && !canViewConfidential) return false;
-                    
-                    const isPayable = ['경비', '직영수리비'].includes(draft.category);
-                    const isApproved = draft.approval2Status === '결재';
-                    const isUnpaid = !draft.paymentDate;
-                    
-                    return isPayable && isApproved && isUnpaid;
-
-                default:
-                    return false;
+                case 'myDrafts': return draft.drafterEmail === currentUser.email;
+                case 'toApprove': return !isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
+                case 'toApproveConfidential': if (!canViewConfidential) return false; return isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
+                case 'allDrafts': return !isConfidential;
+                case 'allConfidentialDrafts': return canViewConfidential && isConfidential;
+                case 'accounting': if (currentUser.team !== '회계팀') return false; if (draft.category === '대외비' && !canViewConfidential) return false; const isPayable = ['경비', '직영수리비'].includes(draft.category); return isPayable && draft.approval2Status === '결재' && !draft.paymentDate;
+                default: return false;
             }
         }
 
         async function saveDraft() {
             const form = document.getElementById('draft-form');
-            if (!form.checkValidity()) {
-                form.reportValidity();
-                return;
-            }
-
-            showLoading('기안을 저장하고 있습니다...');
-
+            if (!form.checkValidity()) { form.reportValidity(); return; }
+            showLoading('저장 중...');
             try {
                 const docId = document.getElementById('input-doc-id').value;
                 const isNew = !docId;
-                
                 const fileInput = document.getElementById('input-attachments');
                 let attachments = isNew ? [] : (draftCache[docId]?.attachments || []);
-                
                 if (fileInput.files.length > 0) {
                     for (const file of fileInput.files) {
                         const storageRef = ref(storage, `attachments/${Date.now()}_${file.name}`);
@@ -229,12 +173,8 @@
                         attachments.push({ name: file.name, url: url });
                     }
                 }
-
                 let newDocId = docId;
-                if (isNew) {
-                    newDocId = await generateDocId();
-                }
-
+                if (isNew) newDocId = await generateDocId();
                 const draftData = {
                     docId: newDocId,
                     category: document.getElementById('input-category').value,
@@ -243,59 +183,33 @@
                     content: document.getElementById('input-content').innerHTML,
                     ref: document.getElementById('input-ref').value,
                     refLinks: getRefLinksFromDOM(),
-                    
                     approver1Email: document.getElementById('input-approver1').value,
                     approver1Name: getUserNameByEmail(document.getElementById('input-approver1').value),
                     approver2Email: document.getElementById('input-approver2').value,
                     approver2Name: getUserNameByEmail(document.getElementById('input-approver2').value),
-                    
                     attachments: attachments,
-                    
                     drafter: isNew ? currentUser.name : (draftCache[newDocId].drafter),
                     drafterEmail: isNew ? currentUser.email : (draftCache[newDocId].drafterEmail),
                     createdAt: isNew ? serverTimestamp() : (draftCache[newDocId].createdAt),
                     date: isNew ? new Date().toISOString().split('T')[0] : (draftCache[newDocId].date),
-                    
                     approval1Status: isNew ? null : (draftCache[newDocId].approval1Status || null),
                     approval2Status: isNew ? null : (draftCache[newDocId].approval2Status || null),
                     paymentDate: isNew ? null : (draftCache[newDocId].paymentDate || null)
                 };
-
-                if (isNew) {
-                    await setDoc(doc(db, "drafts", newDocId), draftData);
-                } else {
-                    await updateDoc(doc(db, "drafts", newDocId), draftData);
-                }
-
-                closeModal('modal-draft');
-                showToast(isNew ? '기안서가 등록되었습니다.' : '기안서가 수정되었습니다.');
-                
-                const activeTab = document.querySelector('.nav-item.active').dataset.target;
-                loadDrafts(activeTab);
-
-            } catch (error) {
-                console.error(error);
-                showToast('저장 중 오류가 발생했습니다: ' + error.message, true);
-            } finally {
-                hideLoading();
-            }
+                if (isNew) await setDoc(doc(db, "drafts", newDocId), draftData);
+                else await updateDoc(doc(db, "drafts", newDocId), draftData);
+                closeModal('modal-draft'); showToast(isNew ? '등록 완료' : '수정 완료');
+                loadDrafts(document.querySelector('.nav-item.active').dataset.target);
+            } catch (error) { console.error(error); showToast('오류 발생: ' + error.message, true); } finally { hideLoading(); }
         }
 
         async function generateDocId() {
             const counterRef = doc(db, 'meta', 'counters');
             const year = new Date().getFullYear().toString();
-            
             return await runTransaction(db, async (transaction) => {
                 const counterDoc = await transaction.get(counterRef);
                 let newCount = 1;
-                
-                if (counterDoc.exists()) {
-                    const data = counterDoc.data();
-                    if (data.year === year) {
-                        newCount = data.count + 1;
-                    }
-                }
-                
+                if (counterDoc.exists() && counterDoc.data().year === year) newCount = counterDoc.data().count + 1;
                 transaction.set(counterRef, { year: year, count: newCount });
                 return `${year}-${String(newCount).padStart(4, '0')}`;
             });
@@ -304,60 +218,29 @@
         window.processApproval = async (docId, action) => {
             const comment = prompt(action === 'approve' ? '승인 의견 (선택)' : '반려 사유 (필수)');
             if (comment === null) return;
-            if (action === 'reject' && !comment.trim()) {
-                alert('반려 시 사유는 필수입니다.');
-                return;
-            }
-
-            showLoading('결재 처리 중...');
+            if (action === 'reject' && !comment.trim()) { alert('반려 사유 필수'); return; }
+            showLoading('처리 중...');
             try {
                 const docRef = doc(db, 'drafts', docId);
                 const draft = draftCache[docId];
                 const updateData = {};
                 const status = action === 'approve' ? '결재' : '반려';
-                
                 if (draft.approver1Email === currentUser.email && !draft.approval1Status) {
-                    updateData.approval1Status = status;
-                    updateData.approval1Comment = comment;
-                } 
-                else if (draft.approver2Email === currentUser.email && draft.approval1Status === '결재') {
-                    updateData.approval2Status = status;
-                    updateData.approval2Comment = comment;
-                    if (status === '결재') {
-                        updateData.finalApprovalDate = new Date().toISOString();
-                    }
-                } else {
-                    throw new Error('결재 권한이 없거나 순서가 아닙니다.');
-                }
-
+                    updateData.approval1Status = status; updateData.approval1Comment = comment;
+                } else if (draft.approver2Email === currentUser.email && draft.approval1Status === '결재') {
+                    updateData.approval2Status = status; updateData.approval2Comment = comment;
+                    if (status === '결재') updateData.finalApprovalDate = new Date().toISOString();
+                } else throw new Error('권한 없음');
                 await updateDoc(docRef, updateData);
-                closeModal('modal-detail');
-                showToast('결재 처리가 완료되었습니다.');
-                
-                const activeTab = document.querySelector('.nav-item.active').dataset.target;
-                loadDrafts(activeTab);
-
-            } catch (e) {
-                alert('오류: ' + e.message);
-            } finally {
-                hideLoading();
-            }
+                closeModal('modal-detail'); showToast('처리 완료');
+                loadDrafts(document.querySelector('.nav-item.active').dataset.target);
+            } catch (e) { alert('오류: ' + e.message); } finally { hideLoading(); }
         };
 
         window.savePaymentDate = async (docId) => {
             const dateVal = document.getElementById('detail-payment-date-input').value;
-            if(!dateVal) return alert('날짜를 선택하세요.');
-
-            try {
-                await updateDoc(doc(db, 'drafts', docId), {
-                    paymentDate: dateVal
-                });
-                alert('지급일자가 저장되었습니다.');
-                closeModal('modal-detail');
-                loadDrafts('accounting');
-            } catch(e) {
-                alert('오류: ' + e.message);
-            }
+            if(!dateVal) return alert('날짜 선택');
+            try { await updateDoc(doc(db, 'drafts', docId), { paymentDate: dateVal }); alert('저장 완료'); closeModal('modal-detail'); loadDrafts('accounting'); } catch(e) { alert(e.message); }
         }
 
         function renderUserInfo() {
@@ -374,36 +257,29 @@
         function renderDrafts(drafts) {
             const container = document.getElementById('draft-list-container');
             container.innerHTML = '';
-            
-            if (drafts.length === 0) {
-                container.innerHTML = `<div class="text-center p-10 text-gray-400">표시할 문서가 없습니다.</div>`;
-                return;
-            }
-
+            if (drafts.length === 0) { container.innerHTML = `<div class="text-center p-10 text-gray-400">문서 없음</div>`; return; }
             drafts.forEach(draft => {
                 draftCache[draft.docId] = draft;
                 const status = getDraftStatus(draft);
                 const isConfidential = draft.category === '대외비';
-                
                 const card = document.createElement('div');
+                // 모바일 최적화: 높이 자동 조절, 여백 조정
                 card.className = `bg-white p-4 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition cursor-pointer mb-3 relative overflow-hidden group`;
                 card.onclick = () => openDetailModal(draft.docId);
-                
                 card.innerHTML = `
                     <div class="absolute left-0 top-0 bottom-0 w-1 ${status.colorClass}"></div>
                     <div class="flex justify-between items-start mb-2 pl-3">
-                        <div>
-                            <span class="text-xs font-semibold text-gray-400 mb-1 block">${draft.docId} | ${draft.corporation}</span>
-                            <h3 class="text-lg font-bold text-gray-800 group-hover:text-blue-600 transition">
+                        <div class="flex-1 min-w-0 pr-2"> <span class="text-xs font-semibold text-gray-400 mb-1 block truncate">${draft.docId} | ${draft.corporation}</span>
+                            <h3 class="text-lg font-bold text-gray-800 truncate">
                                 ${isConfidential ? '<i class="bi bi-shield-lock-fill text-red-500 mr-1"></i>' : ''}
                                 ${draft.title}
                             </h3>
                         </div>
-                        <span class="px-3 py-1 rounded-full text-xs font-bold ${status.bgClass} ${status.textClass}">${status.text}</span>
+                        <span class="px-2 py-1 rounded-full text-xs font-bold whitespace-nowrap ${status.bgClass} ${status.textClass}">${status.text}</span>
                     </div>
                     <div class="flex justify-between items-center text-sm text-gray-500 pl-3">
                         <span><i class="bi bi-person mr-1"></i>${draft.drafter}</span>
-                        <span>${draft.date}</span>
+                        <span>${draft.date.substring(5)}</span>
                     </div>
                 `;
                 container.appendChild(card);
@@ -412,9 +288,9 @@
 
         function getDraftStatus(draft) {
             if (draft.approval1Status === '반려' || draft.approval2Status === '반려') return { text: '반려', bgClass: 'bg-red-100', textClass: 'text-red-600', colorClass: 'bg-red-500' };
-            if (draft.approval2Status === '결재') return { text: '결재완료', bgClass: 'bg-green-100', textClass: 'text-green-600', colorClass: 'bg-green-500' };
+            if (draft.approval2Status === '결재') return { text: '완료', bgClass: 'bg-green-100', textClass: 'text-green-600', colorClass: 'bg-green-500' };
             if (draft.approval1Status === '결재') return { text: '1차승인', bgClass: 'bg-blue-100', textClass: 'text-blue-600', colorClass: 'bg-blue-500' };
-            return { text: '결재대기', bgClass: 'bg-yellow-100', textClass: 'text-yellow-600', colorClass: 'bg-yellow-400' };
+            return { text: '대기', bgClass: 'bg-yellow-100', textClass: 'text-yellow-600', colorClass: 'bg-yellow-400' };
         }
 
         function openNewDraftModal() {
@@ -422,93 +298,52 @@
             document.getElementById('input-doc-id').value = '';
             document.getElementById('input-content').innerHTML = '';
             document.getElementById('draft-modal-title').textContent = '새 기안 작성';
-            
-            document.getElementById('ref-links-wrapper').innerHTML = `
-                <div class="flex gap-2 mb-2 ref-link-row">
-                    <input type="text" placeholder="URL을 입력하세요" class="flex-1 rounded-lg border-gray-300 border p-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                </div>
-            `;
-            
+            document.getElementById('ref-links-wrapper').innerHTML = `<div class="flex gap-2 mb-2 ref-link-row"><input type="text" placeholder="URL" class="flex-1 rounded-lg border-gray-300 border p-2 text-sm"></div>`;
             document.getElementById('modal-draft').classList.remove('hidden');
         }
 
         window.openDetailModal = (docId) => {
             const draft = draftCache[docId];
             if (!draft) return;
-            
             const modal = document.getElementById('modal-detail');
             document.getElementById('detail-doc-id').textContent = draft.docId;
             document.getElementById('detail-title').textContent = draft.title;
             document.getElementById('detail-info').innerHTML = `
-                <span class="mr-3 badge bg-gray-100 px-2 py-1 rounded">${draft.corporation}</span>
-                <span class="mr-3 badge bg-gray-100 px-2 py-1 rounded">${draft.category}</span>
-                <span class="mr-3">기안자: ${draft.drafter}</span>
-                <span>일자: ${draft.date}</span>
+                <span class="mr-2 badge bg-gray-100 px-2 py-1 rounded text-xs">${draft.corporation}</span>
+                <span class="mr-2 badge bg-gray-100 px-2 py-1 rounded text-xs">${draft.category}</span>
+                <div class="mt-1 text-xs text-gray-500">기안자: ${draft.drafter} | 일자: ${draft.date}</div>
             `;
             document.getElementById('detail-content').innerHTML = draft.content;
             
             const linksContainer = document.getElementById('detail-links');
             linksContainer.innerHTML = '';
-            if (draft.refLinks && draft.refLinks.length > 0) {
-                draft.refLinks.forEach(link => {
-                     linksContainer.innerHTML += `<a href="${link.url}" target="_blank" class="block text-blue-500 hover:underline mb-1"><i class="bi bi-link-45deg"></i> ${link.url}</a>`;
-                });
-            }
+            if (draft.refLinks) draft.refLinks.forEach(link => linksContainer.innerHTML += `<a href="${link.url}" target="_blank" class="block text-blue-500 hover:underline mb-1 truncate text-sm"><i class="bi bi-link-45deg"></i> ${link.url}</a>`);
 
             const filesContainer = document.getElementById('detail-files');
             filesContainer.innerHTML = '';
-            if (draft.attachments && draft.attachments.length > 0) {
-                draft.attachments.forEach(file => {
-                    filesContainer.innerHTML += `
-                        <a href="${file.url}" target="_blank" class="inline-flex items-center px-3 py-1 rounded-full border border-gray-300 bg-gray-50 text-sm text-gray-700 hover:bg-gray-100 mr-2 mb-2">
-                            <i class="bi bi-paperclip mr-1"></i> ${file.name}
-                        </a>`;
-                });
-            }
+            if (draft.attachments) draft.attachments.forEach(file => filesContainer.innerHTML += `<a href="${file.url}" target="_blank" class="inline-flex items-center px-3 py-1 rounded-full border border-gray-300 bg-gray-50 text-xs text-gray-700 hover:bg-gray-100 mr-2 mb-2"><i class="bi bi-paperclip mr-1"></i> ${file.name}</a>`);
 
             renderApprovalStatus('detail-appr1', draft.approver1Name, draft.approval1Status, draft.approval1Comment);
             renderApprovalStatus('detail-appr2', draft.approver2Name, draft.approval2Status, draft.approval2Comment);
 
             const btnArea = document.getElementById('detail-actions');
             btnArea.innerHTML = '';
-
             const isAppr1 = draft.approver1Email === currentUser.email && !draft.approval1Status;
             const isAppr2 = draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status;
-
             if (isAppr1 || isAppr2) {
-                btnArea.innerHTML = `
-                    <button onclick="processApproval('${draft.docId}', 'approve')" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 mr-2">승인</button>
-                    <button onclick="processApproval('${draft.docId}', 'reject')" class="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600">반려</button>
-                `;
+                btnArea.innerHTML = `<button onclick="processApproval('${draft.docId}', 'approve')" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 mr-2 text-sm">승인</button><button onclick="processApproval('${draft.docId}', 'reject')" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm">반려</button>`;
             }
-
-            // [추가] 최종 결재 완료 시 인쇄 버튼 표시
             if (draft.approval2Status === '결재') {
-                btnArea.innerHTML += `
-                    <button onclick="window.print()" class="bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-800 ml-2 flex items-center gap-2">
-                        <i class="bi bi-printer"></i> 인쇄
-                    </button>
-                `;
+                btnArea.innerHTML += `<button onclick="window.print()" class="bg-gray-700 text-white px-4 py-2 rounded hover:bg-gray-800 ml-2 text-sm flex items-center gap-1"><i class="bi bi-printer"></i> 인쇄</button>`;
             }
 
             const paymentArea = document.getElementById('detail-payment-area');
             paymentArea.classList.add('hidden');
-            
             if (currentUser.team === '회계팀' && ['경비', '직영수리비'].includes(draft.category) && draft.approval2Status === '결재' && !draft.paymentDate) {
                 paymentArea.classList.remove('hidden');
-                
-                let infoMsg = '';
-                if (draft.category === '직영수리비') {
-                    const cost = repairMap[draft.docId];
-                    if (cost) {
-                        infoMsg = `<div class="text-blue-600 font-bold mb-2">※ 매핑된 수리비: ${cost}</div>`;
-                    } else {
-                        infoMsg = `<div class="text-red-500 font-bold mb-2">※ 수리비 내역을 찾을 수 없습니다.</div>`;
-                    }
-                }
+                let infoMsg = draft.category === '직영수리비' ? (repairMap[draft.docId] ? `<div class="text-blue-600 text-xs font-bold mb-2">수리비: ${repairMap[draft.docId]}</div>` : `<div class="text-red-500 text-xs font-bold mb-2">수리비 없음</div>`) : '';
                 document.getElementById('repair-cost-display').innerHTML = infoMsg;
             }
-
             modal.classList.remove('hidden');
         }
 
@@ -517,156 +352,75 @@
             let badge = '<span class="px-2 py-0.5 bg-gray-200 text-gray-600 rounded text-xs">대기</span>';
             if (status === '결재') badge = '<span class="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">승인</span>';
             if (status === '반려') badge = '<span class="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs">반려</span>';
-            
-            container.innerHTML = `
-                <div class="font-bold text-sm">${name}</div>
-                <div class="mb-1">${badge}</div>
-                ${comment ? `<div class="text-xs text-gray-500 bg-gray-50 p-2 rounded">"${comment}"</div>` : ''}
-            `;
+            container.innerHTML = `<div class="font-bold text-sm">${name}</div><div class="mb-1">${badge}</div>${comment ? `<div class="text-xs text-gray-500 bg-gray-50 p-2 rounded">"${comment}"</div>` : ''}`;
         }
 
-        function closeModal(modalId) {
-            document.getElementById(modalId).classList.add('hidden');
-        }
-
-        function showLoading(msg) {
-            const overlay = document.getElementById('loading-overlay');
-            overlay.querySelector('p').textContent = msg;
-            overlay.classList.remove('hidden');
-        }
-
-        function hideLoading() {
-            document.getElementById('loading-overlay').classList.add('hidden');
-        }
-
+        function closeModal(modalId) { document.getElementById(modalId).classList.add('hidden'); }
+        function showLoading(msg) { document.querySelector('#loading-overlay p').textContent = msg; document.getElementById('loading-overlay').classList.remove('hidden'); }
+        function hideLoading() { document.getElementById('loading-overlay').classList.add('hidden'); }
         function showToast(msg, isError = false) {
             const toast = document.createElement('div');
-            toast.className = `fixed bottom-5 right-5 px-6 py-3 rounded-lg shadow-lg text-white ${isError ? 'bg-red-500' : 'bg-gray-800'} animate-bounce`;
-            toast.textContent = msg;
-            document.body.appendChild(toast);
-            setTimeout(() => toast.remove(), 3000);
+            toast.className = `fixed bottom-5 right-5 px-6 py-3 rounded-lg shadow-lg text-white text-sm ${isError ? 'bg-red-500' : 'bg-gray-800'} animate-bounce z-50`;
+            toast.textContent = msg; document.body.appendChild(toast); setTimeout(() => toast.remove(), 3000);
         }
-
         function getTitleByListType(type) {
-            const map = {
-                'myDrafts': '내가 올린 기안',
-                'toApprove': '결재할 문서',
-                'toApproveConfidential': '결재할 문서 (대외비)',
-                'allDrafts': '전체 기안',
-                'allConfidentialDrafts': '전체 기안 (대외비)',
-                'accounting': '회계팀 지급 처리'
-            };
-            return map[type] || '기안서 목록';
+            const map = { 'myDrafts': '내가 올린 기안', 'toApprove': '결재할 문서', 'toApproveConfidential': '결재(대외비)', 'allDrafts': '전체 기안', 'allConfidentialDrafts': '전체(대외비)', 'accounting': '지급 처리' };
+            return map[type] || '목록';
         }
-
-        function updateApproverList() {
-            const options = userList.map(u => `<option value="${u.email}">${u.name} (${u.team})</option>`).join('');
-            document.getElementById('approvers-datalist').innerHTML = options;
-        }
-
-        function getUserNameByEmail(email) {
-            const u = userList.find(user => user.email === email);
-            return u ? u.name : email.split('@')[0];
-        }
-        
-        window.addRefLinkInput = () => {
-            const wrapper = document.getElementById('ref-links-wrapper');
-            const div = document.createElement('div');
-            div.className = 'flex gap-2 mb-2 ref-link-row';
-            div.innerHTML = `
-                <input type="text" placeholder="URL을 입력하세요" class="flex-1 rounded-lg border-gray-300 border p-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                <button type="button" onclick="this.parentElement.remove()" class="text-red-500 hover:text-red-700"><i class="bi bi-trash"></i></button>
-            `;
-            wrapper.appendChild(div);
-        }
-
-        function getRefLinksFromDOM() {
-            const inputs = document.querySelectorAll('.ref-link-row input');
-            const links = [];
-            inputs.forEach(input => {
-                if(input.value.trim()) links.push({ url: input.value.trim() });
-            });
-            return links;
-        }
+        function updateApproverList() { document.getElementById('approvers-datalist').innerHTML = userList.map(u => `<option value="${u.email}">${u.name} (${u.team})</option>`).join(''); }
+        function getUserNameByEmail(email) { const u = userList.find(user => user.email === email); return u ? u.name : email.split('@')[0]; }
+        window.addRefLinkInput = () => { document.getElementById('ref-links-wrapper').insertAdjacentHTML('beforeend', `<div class="flex gap-2 mb-2 ref-link-row"><input type="text" placeholder="URL" class="flex-1 rounded-lg border-gray-300 border p-2 text-sm"><button type="button" onclick="this.parentElement.remove()" class="text-red-500"><i class="bi bi-trash"></i></button></div>`); }
+        function getRefLinksFromDOM() { const links = []; document.querySelectorAll('.ref-link-row input').forEach(input => { if(input.value.trim()) links.push({ url: input.value.trim() }); }); return links; }
 
     </script>
 
     <style>
         body { font-family: 'Noto Sans KR', sans-serif; background-color: #F3F4F6; }
-        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: #f1f1f1; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-
-        /* [추가] 인쇄 전용 스타일 */
         @media print {
-            /* 모든 요소 숨김 */
-            body * {
-                visibility: hidden;
-            }
-            
-            /* 모달 내용만 표시 */
-            #modal-detail, #modal-detail * {
-                visibility: visible;
-            }
-
-            /* 모달 위치 및 크기 조정 */
-            #modal-detail {
-                position: absolute;
-                left: 0;
-                top: 0;
-                width: 100%;
-                height: auto;
-                margin: 0;
-                padding: 0;
-                background: white;
-                box-shadow: none !important;
-                overflow: visible !important; /* 스크롤 내용 전체 표시 */
-            }
-
-            /* 모달 내부의 스크롤 영역 해제 */
-            #modal-detail .overflow-y-auto {
-                overflow: visible !important;
-                height: auto !important;
-            }
-
-            /* 인쇄 시 불필요한 요소(버튼, 닫기 아이콘, 배경 등) 숨김 */
-            [data-close-modal], #detail-actions, .bg-black\/40, #loading-overlay {
-                display: none !important;
-            }
+            body * { visibility: hidden; }
+            #modal-detail, #modal-detail * { visibility: visible; }
+            #modal-detail { position: absolute; left: 0; top: 0; width: 100%; height: auto; margin: 0; padding: 0; background: white; box-shadow: none !important; overflow: visible !important; }
+            #modal-detail .overflow-y-auto { overflow: visible !important; height: auto !important; }
+            [data-close-modal], #detail-actions, .bg-black\/40, #loading-overlay, button { display: none !important; }
         }
     </style>
 </head>
 <body>
 
-    <div id="loading-overlay" class="fixed inset-0 bg-white/90 z-50 flex flex-col justify-center items-center backdrop-blur-sm transition-opacity hidden">
-        <div class="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mb-4"></div>
-        <p class="text-gray-600 font-medium">로딩중...</p>
+    <div id="loading-overlay" class="fixed inset-0 bg-white/90 z-50 flex flex-col justify-center items-center backdrop-blur-sm hidden">
+        <div class="animate-spin rounded-full h-10 w-10 border-b-4 border-blue-600 mb-4"></div>
+        <p class="text-gray-600 font-medium text-sm">로딩중...</p>
     </div>
 
     <div id="login-view" class="h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 hidden">
-        <div class="bg-white p-10 rounded-2xl shadow-2xl text-center max-w-md w-full border border-white/50">
+        <div class="bg-white p-8 rounded-2xl shadow-2xl text-center max-w-sm w-full border border-white/50 mx-4">
             <div class="mb-8">
-                <div class="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-500/30">
-                    <i class="bi bi-journal-check text-3xl text-white"></i>
+                <div class="bg-blue-600 w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-500/30">
+                    <i class="bi bi-journal-check text-2xl text-white"></i>
                 </div>
-                <h1 class="text-2xl font-bold text-gray-800 mb-2">기안서 결재 시스템</h1>
-                <p class="text-gray-500">Google 계정으로 로그인하여 시작하세요.</p>
+                <h1 class="text-xl font-bold text-gray-800 mb-2">기안서 결재 시스템</h1>
+                <p class="text-gray-500 text-sm">Google 계정으로 로그인하세요.</p>
             </div>
-            <button id="btn-login" class="w-full bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-semibold py-3 px-4 rounded-xl shadow-sm transition flex items-center justify-center gap-3">
-                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-6 h-6">
-                Google 계정으로 로그인
+            <button id="btn-login" class="w-full bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-medium py-3 px-4 rounded-xl shadow-sm transition flex items-center justify-center gap-3 text-sm">
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-5 h-5">
+                Google 로그인
             </button>
         </div>
     </div>
 
-    <div id="app-view" class="hidden flex h-screen overflow-hidden">
+    <div id="app-view" class="hidden flex h-screen overflow-hidden relative">
         
-        <aside class="w-64 bg-white border-r border-gray-200 flex flex-col z-10 shadow-lg">
-            <div class="p-6 border-b border-gray-100">
+        <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden md:hidden" onclick="toggleSidebar()"></div>
+
+        <aside id="main-sidebar" class="fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-gray-200 flex flex-col shadow-lg transform -translate-x-full transition-transform duration-300 md:translate-x-0 md:static md:flex md:shadow-none">
+            <div class="p-6 border-b border-gray-100 flex justify-between items-center">
                 <div class="flex items-center gap-3 text-blue-700 font-bold text-xl">
                     <i class="bi bi-journal-bookmark-fill"></i> DY TOUR
                 </div>
+                <button class="md:hidden text-gray-400" onclick="toggleSidebar()"><i class="bi bi-x-lg"></i></button>
             </div>
             
             <nav class="flex-1 overflow-y-auto p-4 space-y-1">
@@ -714,20 +468,26 @@
             </div>
         </aside>
 
-        <main class="flex-1 flex flex-col min-w-0 bg-gray-50/50">
-            <header class="bg-white border-b border-gray-200 h-16 flex items-center justify-between px-8 shadow-sm">
-                <h2 id="page-title" class="text-xl font-bold text-gray-800">내가 올린 기안</h2>
-                <div class="flex gap-3">
-                    <button id="btn-refresh" class="w-10 h-10 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-blue-600 transition flex items-center justify-center">
+        <main class="flex-1 flex flex-col min-w-0 bg-gray-50/50 w-full transition-all duration-300">
+            <header class="bg-white border-b border-gray-200 h-16 flex items-center justify-between px-4 md:px-8 shadow-sm">
+                <div class="flex items-center gap-3">
+                    <button class="md:hidden text-gray-600 text-2xl" onclick="toggleSidebar()">
+                        <i class="bi bi-list"></i>
+                    </button>
+                    <h2 id="page-title" class="text-lg md:text-xl font-bold text-gray-800 truncate">내가 올린 기안</h2>
+                </div>
+                
+                <div class="flex gap-2">
+                    <button id="btn-refresh" class="w-9 h-9 md:w-10 md:h-10 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-blue-600 transition flex items-center justify-center">
                         <i class="bi bi-arrow-clockwise text-lg"></i>
                     </button>
-                    <button id="btn-new-draft" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-full font-medium shadow-md shadow-blue-500/20 transition flex items-center gap-2">
-                        <i class="bi bi-pencil-square"></i> 새 기안 작성
+                    <button id="btn-new-draft" class="bg-blue-600 hover:bg-blue-700 text-white px-3 md:px-5 py-2 rounded-full font-medium shadow-md shadow-blue-500/20 transition flex items-center gap-2">
+                        <i class="bi bi-pencil-square"></i> <span class="hidden md:inline">새 기안</span>
                     </button>
                 </div>
             </header>
 
-            <div id="draft-list-container" class="flex-1 overflow-y-auto p-8">
+            <div id="draft-list-container" class="flex-1 overflow-y-auto p-4 md:p-8">
             </div>
         </main>
     </div>
@@ -735,32 +495,27 @@
     <div id="modal-draft" class="fixed inset-0 z-50 hidden">
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" data-close-modal="modal-draft"></div>
         <div class="absolute inset-y-0 right-0 w-full max-w-2xl bg-white shadow-2xl flex flex-col animate-slide-in">
-            <div class="p-6 border-b flex justify-between items-center bg-gray-50">
+            <div class="p-4 md:p-6 border-b flex justify-between items-center bg-gray-50">
                 <h3 id="draft-modal-title" class="text-lg font-bold text-gray-800">새 기안 작성</h3>
                 <button class="text-gray-400 hover:text-gray-600" data-close-modal="modal-draft"><i class="bi bi-x-lg text-xl"></i></button>
             </div>
             
-            <div class="flex-1 overflow-y-auto p-6 space-y-6">
+            <div class="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 md:space-y-6">
                 <form id="draft-form" onsubmit="return false;">
                     <input type="hidden" id="input-doc-id">
                     
                     <div class="grid grid-cols-2 gap-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">구분</label>
-                            <select id="input-category" class="w-full rounded-lg border-gray-300 border p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none" required>
-                                <option value="" disabled selected>선택하세요</option>
-                                <option>경비</option>
-                                <option>보고</option>
-                                <option>인사</option>
-                                <option>직영수리비</option>
-                                <option>기타</option>
-                                <option class="text-red-500 font-bold">대외비</option>
+                            <select id="input-category" class="w-full rounded-lg border-gray-300 border p-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" required>
+                                <option value="" disabled selected>선택</option>
+                                <option>경비</option><option>보고</option><option>인사</option><option>직영수리비</option><option>기타</option><option class="text-red-500 font-bold">대외비</option>
                             </select>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">법인</label>
-                            <select id="input-corporation" class="w-full rounded-lg border-gray-300 border p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none" required>
-                                <option value="" disabled selected>선택하세요</option>
+                            <select id="input-corporation" class="w-full rounded-lg border-gray-300 border p-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" required>
+                                <option value="" disabled selected>선택</option>
                                 <option>동영(파주)</option><option>동영투어</option><option>동영(용인)</option><option>동영(서울)</option>
                             </select>
                         </div>
@@ -768,81 +523,77 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">제목</label>
-                        <input type="text" id="input-title" class="w-full rounded-lg border-gray-300 border p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none" required>
+                        <input type="text" id="input-title" class="w-full rounded-lg border-gray-300 border p-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" required>
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">내용 (이미지 붙여넣기 가능)</label>
-                        <div id="input-content" class="w-full h-64 overflow-y-auto rounded-lg border-gray-300 border p-4 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white" contenteditable="true"></div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">내용</label>
+                        <div id="input-content" class="w-full h-48 md:h-64 overflow-y-auto rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-sm" contenteditable="true"></div>
                     </div>
 
                     <div class="grid grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">1차 결재자</label>
-                            <input type="text" id="input-approver1" list="approvers-datalist" class="w-full rounded-lg border-gray-300 border p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="이름 입력" required>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">1차 결재</label>
+                            <input type="text" id="input-approver1" list="approvers-datalist" class="w-full rounded-lg border-gray-300 border p-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="이름" required>
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">2차 결재자</label>
-                            <input type="text" id="input-approver2" list="approvers-datalist" class="w-full rounded-lg border-gray-300 border p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="이름 입력" required>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">2차 결재</label>
+                            <input type="text" id="input-approver2" list="approvers-datalist" class="w-full rounded-lg border-gray-300 border p-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="이름" required>
                         </div>
                     </div>
                     <datalist id="approvers-datalist"></datalist>
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">업무참조부서 (선택)</label>
-                        <input type="text" id="input-ref" class="w-full rounded-lg border-gray-300 border p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                    </div>
-
-                    <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">참조 링크</label>
-                        <div id="ref-links-wrapper">
-                            <div class="flex gap-2 mb-2 ref-link-row">
-                                <input type="text" placeholder="URL을 입력하세요" class="flex-1 rounded-lg border-gray-300 border p-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                            </div>
-                        </div>
-                        <button type="button" onclick="addRefLinkInput()" class="text-sm text-blue-600 hover:text-blue-800"><i class="bi bi-plus"></i> 링크 추가</button>
+                        <div id="ref-links-wrapper"></div>
+                        <button type="button" onclick="addRefLinkInput()" class="text-sm text-blue-600 hover:text-blue-800 mt-1"><i class="bi bi-plus"></i> 추가</button>
+                    </div>
+                    
+                    <div>
+                         <label class="block text-sm font-medium text-gray-700 mb-1">참조 부서</label>
+                         <input type="text" id="input-ref" class="w-full rounded-lg border-gray-300 border p-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
                     </div>
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">첨부파일</label>
-                        <input type="file" id="input-attachments" multiple class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                        <input type="file" id="input-attachments" multiple class="block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
                     </div>
                 </form>
             </div>
             
-            <div class="p-6 border-t bg-gray-50 flex justify-end gap-3">
-                <button data-close-modal="modal-draft" class="px-5 py-2.5 rounded-lg text-gray-600 hover:bg-gray-200 font-medium">취소</button>
-                <button id="btn-save-draft" class="px-6 py-2.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-medium shadow-md">저장하기</button>
+            <div class="p-4 md:p-6 border-t bg-gray-50 flex justify-end gap-3">
+                <button data-close-modal="modal-draft" class="px-4 py-2 rounded-lg text-gray-600 hover:bg-gray-200 font-medium text-sm">취소</button>
+                <button id="btn-save-draft" class="px-5 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-medium shadow-md text-sm">저장</button>
             </div>
         </div>
     </div>
 
     <div id="modal-detail" class="fixed inset-0 z-50 hidden">
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" data-close-modal="modal-detail"></div>
-        <div class="absolute inset-0 m-auto max-w-4xl max-h-[90vh] bg-white rounded-xl shadow-2xl flex flex-col overflow-hidden">
-            <div class="p-6 border-b flex justify-between items-center bg-gray-50">
-                <div>
-                    <span class="text-xs font-bold text-gray-400 block mb-1" id="detail-doc-id">DOC-ID</span>
-                    <h3 class="text-xl font-bold text-gray-800" id="detail-title">제목</h3>
+        <div class="absolute inset-0 m-auto max-w-4xl max-h-[90vh] w-[95%] bg-white rounded-xl shadow-2xl flex flex-col overflow-hidden">
+            <div class="p-4 md:p-6 border-b flex justify-between items-center bg-gray-50">
+                <div class="min-w-0 pr-4">
+                    <span class="text-xs font-bold text-gray-400 block mb-1 truncate" id="detail-doc-id">DOC-ID</span>
+                    <h3 class="text-lg md:text-xl font-bold text-gray-800 truncate" id="detail-title">제목</h3>
                 </div>
-                <button class="text-gray-400 hover:text-gray-600" data-close-modal="modal-detail"><i class="bi bi-x-lg text-2xl"></i></button>
+                <button class="text-gray-400 hover:text-gray-600 shrink-0" data-close-modal="modal-detail"><i class="bi bi-x-lg text-2xl"></i></button>
             </div>
             
-            <div class="flex-1 overflow-y-auto p-8">
+            <div class="flex-1 overflow-y-auto p-4 md:p-8">
                 <div id="detail-info" class="flex flex-wrap text-sm text-gray-600 mb-6 pb-6 border-b"></div>
 
-                <div class="flex items-center justify-center gap-4 mb-8 bg-gray-50 p-6 rounded-xl border border-gray-100">
-                    <div class="text-center">
+                <div class="flex items-center justify-center gap-2 md:gap-4 mb-6 md:mb-8 bg-gray-50 p-4 md:p-6 rounded-xl border border-gray-100 overflow-x-auto">
+                    <div class="text-center shrink-0">
                         <div class="font-bold text-sm">기안</div>
                         <div class="text-gray-500 text-xs mt-1">작성</div>
                     </div>
                     <i class="bi bi-arrow-right text-gray-300"></i>
-                    <div id="detail-appr1" class="text-center min-w-[80px]"></div>
+                    <div id="detail-appr1" class="text-center min-w-[70px] shrink-0"></div>
                     <i class="bi bi-arrow-right text-gray-300"></i>
-                    <div id="detail-appr2" class="text-center min-w-[80px]"></div>
+                    <div id="detail-appr2" class="text-center min-w-[70px] shrink-0"></div>
                 </div>
 
-                <div id="detail-content" class="prose max-w-none mb-8 min-h-[200px] border p-4 rounded-lg"></div>
+                <div id="detail-content" class="prose max-w-none mb-8 min-h-[150px] border p-4 rounded-lg text-sm md:text-base"></div>
 
                 <div class="space-y-4">
                     <div id="detail-links"></div>
@@ -850,16 +601,16 @@
                 </div>
 
                 <div id="detail-payment-area" class="mt-8 pt-6 border-t border-dashed border-gray-300 hidden">
-                    <h4 class="font-bold text-gray-800 mb-3"><i class="bi bi-wallet2"></i> 회계팀 처리</h4>
-                    <div id="repair-cost-display" class="mb-3 text-sm"></div>
+                    <h4 class="font-bold text-gray-800 mb-3 text-sm"><i class="bi bi-wallet2"></i> 회계팀 처리</h4>
+                    <div id="repair-cost-display" class="mb-3"></div>
                     <div class="flex items-center gap-3">
-                        <input type="date" id="detail-payment-date-input" class="border p-2 rounded">
-                        <button onclick="savePaymentDate(document.getElementById('detail-doc-id').textContent)" class="bg-gray-800 text-white px-4 py-2 rounded hover:bg-black text-sm">지급일 저장</button>
+                        <input type="date" id="detail-payment-date-input" class="border p-2 rounded text-sm">
+                        <button onclick="savePaymentDate(document.getElementById('detail-doc-id').textContent)" class="bg-gray-800 text-white px-3 py-2 rounded hover:bg-black text-xs">지급일 저장</button>
                     </div>
                 </div>
             </div>
             
-            <div class="p-6 border-t bg-white flex justify-end gap-3" id="detail-actions">
+            <div class="p-4 border-t bg-white flex justify-end gap-2" id="detail-actions">
             </div>
         </div>
     </div>
