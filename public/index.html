@@ -123,33 +123,20 @@
             } catch (error) { console.error(error); }
         }
 
-        // --- [수정됨] 회계팀 목록일 때 법인별 정렬 로직 추가 ---
+        // --- 데이터 로드 로직 ---
         async function loadDrafts(listType) {
             const listContainer = document.getElementById('draft-list-container');
             listContainer.innerHTML = '<div class="flex justify-center p-10"><div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div></div>';
             document.getElementById('page-title').textContent = getTitleByListType(listType);
 
             try {
+                // 회계팀 법인별 메뉴일 때도 기본 정렬은 작성일 역순
                 const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'));
                 const querySnapshot = await getDocs(q);
                 let drafts = [];
                 querySnapshot.forEach((doc) => { drafts.push({ id: doc.id, ...doc.data() }); });
                 
                 let filteredDrafts = drafts.filter(draft => filterDraft(draft, listType));
-
-                // 회계팀 화면일 경우 법인별로 정렬 (파주 -> 용인 -> 서울 -> 투어 -> 기타 순)
-                if (listType === 'accounting') {
-                    const corpOrder = ['동영(파주)', '동영(용인)', '동영(서울)', '동영투어'];
-                    filteredDrafts.sort((a, b) => {
-                        const indexA = corpOrder.indexOf(a.corporation);
-                        const indexB = corpOrder.indexOf(b.corporation);
-                        // 지정된 순서가 없으면(index가 -1) 가장 뒤로(999) 보냄
-                        const valA = indexA === -1 ? 999 : indexA;
-                        const valB = indexB === -1 ? 999 : indexB;
-                        return valA - valB;
-                    });
-                }
-
                 renderDrafts(filteredDrafts, listType);
             } catch (error) {
                 console.error(error);
@@ -160,13 +147,27 @@
         function filterDraft(draft, listType) {
             const isConfidential = draft.category === '대외비';
             const canViewConfidential = currentUser.role === '대표' || currentUser.confidentialAccess;
+            
+            // 회계팀 공통 조건: 팀 확인, 대외비 권한 확인, 카테고리(경비/수리), 최종승인 완료, 미지급 상태
+            const isAccountingTarget = (currentUser.team === '회계팀') && 
+                                       (!isConfidential || canViewConfidential) &&
+                                       ['경비', '직영수리비'].includes(draft.category) &&
+                                       draft.approval2Status === '결재' &&
+                                       !draft.paymentDate;
+
             switch (listType) {
                 case 'myDrafts': return draft.drafterEmail === currentUser.email;
                 case 'toApprove': return !isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
                 case 'toApproveConfidential': if (!canViewConfidential) return false; return isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
                 case 'allDrafts': return !isConfidential;
                 case 'allConfidentialDrafts': return canViewConfidential && isConfidential;
-                case 'accounting': if (currentUser.team !== '회계팀') return false; if (draft.category === '대외비' && !canViewConfidential) return false; const isPayable = ['경비', '직영수리비'].includes(draft.category); return isPayable && draft.approval2Status === '결재' && !draft.paymentDate;
+                
+                // [변경] 회계팀 법인별 필터링
+                case 'acc-paju': return isAccountingTarget && draft.corporation === '동영(파주)';
+                case 'acc-yongin': return isAccountingTarget && draft.corporation === '동영(용인)';
+                case 'acc-seoul': return isAccountingTarget && draft.corporation === '동영(서울)';
+                case 'acc-tour': return isAccountingTarget === true && draft.corporation === '동영투어'; // isAccountingTarget check
+                
                 default: return false;
             }
         }
@@ -263,7 +264,13 @@
         window.savePaymentDate = async (docId) => {
             const dateVal = document.getElementById('detail-payment-date-input').value;
             if(!dateVal) return alert('날짜 선택');
-            try { await updateDoc(doc(db, 'drafts', docId), { paymentDate: dateVal }); alert('저장 완료'); closeModal('modal-detail'); loadDrafts('accounting'); } catch(e) { alert(e.message); }
+            try { 
+                await updateDoc(doc(db, 'drafts', docId), { paymentDate: dateVal }); 
+                alert('저장 완료'); 
+                closeModal('modal-detail'); 
+                // 저장 후 현재 보고 있던 리스트 새로고침
+                loadDrafts(document.querySelector('.nav-item.active').dataset.target); 
+            } catch(e) { alert(e.message); }
         }
 
         function renderUserInfo() {
@@ -277,26 +284,15 @@
             document.getElementById(viewId).classList.remove('hidden');
         }
 
-        // --- [수정됨] 회계팀 목록일 때 법인 헤더 표시 기능 추가 ---
+        // --- [변경] 목록 렌더링 (구분선 로직 제거) ---
         function renderDrafts(drafts, listType = '') {
             const container = document.getElementById('draft-list-container');
             container.innerHTML = '';
             if (drafts.length === 0) { container.innerHTML = `<div class="text-center p-10 text-gray-400">문서 없음</div>`; return; }
             
-            let lastCorporation = '';
-
             drafts.forEach(draft => {
                 draftCache[draft.docId] = draft;
                 
-                // 회계팀 지급처리 화면이면 법인이 바뀔 때마다 구분선 헤더 추가
-                if (listType === 'accounting' && draft.corporation !== lastCorporation) {
-                    const header = document.createElement('div');
-                    header.className = "mt-6 mb-3 px-2 border-b-2 border-blue-600 pb-1 text-lg font-bold text-blue-800 flex items-center";
-                    header.innerHTML = `<i class="bi bi-building mr-2"></i> ${draft.corporation}`;
-                    container.appendChild(header);
-                    lastCorporation = draft.corporation;
-                }
-
                 const status = getDraftStatus(draft);
                 const isConfidential = draft.category === '대외비';
                 const card = document.createElement('div');
@@ -338,7 +334,6 @@
             document.getElementById('modal-draft').classList.remove('hidden');
         }
 
-        // --- [수정됨] 상세화면에 '수정' 버튼 추가 로직 ---
         window.openDetailModal = (docId) => {
             const draft = draftCache[docId];
             if (!draft) return;
@@ -372,7 +367,6 @@
                 btnArea.innerHTML = `<button onclick="processApproval('${draft.docId}', 'approve')" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 mr-2 text-sm">승인</button><button onclick="processApproval('${draft.docId}', 'reject')" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm">반려</button>`;
             }
 
-            // [추가] 내가 쓴 글이고, 아직 1차 결재가 안 났으면 수정 가능
             if (draft.drafterEmail === currentUser.email && !draft.approval1Status) {
                 btnArea.innerHTML += `<button onclick="editDraft('${draft.docId}')" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 mr-2 text-sm flex items-center gap-1"><i class="bi bi-pencil"></i> 수정</button>`;
             }
@@ -391,19 +385,12 @@
             modal.classList.remove('hidden');
         }
 
-        // --- [추가] 수정 버튼 클릭 시 실행되는 함수 ---
         window.editDraft = (docId) => {
             const draft = draftCache[docId];
             if (!draft) return;
-
-            // 상세창 닫기
             closeModal('modal-detail');
-            
-            // 작성 모달 열기 및 초기화
             openNewDraftModal();
             document.getElementById('draft-modal-title').textContent = '기안 수정';
-
-            // 데이터 채워넣기
             document.getElementById('input-doc-id').value = draft.docId;
             document.getElementById('input-category').value = draft.category;
             document.getElementById('input-corporation').value = draft.corporation;
@@ -412,8 +399,7 @@
             document.getElementById('input-ref').value = draft.ref || '';
             document.getElementById('input-approver1').value = draft.approver1Email;
             document.getElementById('input-approver2').value = draft.approver2Email;
-
-            // 참조 링크 복원
+            
             const linkWrapper = document.getElementById('ref-links-wrapper');
             linkWrapper.innerHTML = '';
             if (draft.refLinks && draft.refLinks.length > 0) {
@@ -423,7 +409,6 @@
             } else {
                  linkWrapper.innerHTML = `<div class="flex gap-2 mb-2 ref-link-row"><input type="text" placeholder="URL" class="flex-1 rounded-lg border-gray-300 border p-2 text-sm"></div>`;
             }
-
             showToast('내용을 수정 후 저장하세요.');
         };
 
@@ -444,7 +429,18 @@
             toast.textContent = msg; document.body.appendChild(toast); setTimeout(() => toast.remove(), 3000);
         }
         function getTitleByListType(type) {
-            const map = { 'myDrafts': '내가 올린 기안', 'toApprove': '결재할 문서', 'toApproveConfidential': '결재(대외비)', 'allDrafts': '전체 기안', 'allConfidentialDrafts': '전체(대외비)', 'accounting': '지급 처리' };
+            const map = { 
+                'myDrafts': '내가 올린 기안', 
+                'toApprove': '결재할 문서', 
+                'toApproveConfidential': '결재(대외비)', 
+                'allDrafts': '전체 기안', 
+                'allConfidentialDrafts': '전체(대외비)',
+                // [변경] 타이틀 매핑 추가
+                'acc-paju': '지급 처리 - 동영(파주)',
+                'acc-yongin': '지급 처리 - 동영(용인)',
+                'acc-seoul': '지급 처리 - 동영(서울)',
+                'acc-tour': '지급 처리 - 동영투어'
+            };
             return map[type] || '목록';
         }
         function updateApproverList() { document.getElementById('approvers-datalist').innerHTML = userList.map(u => `<option value="${u.email}">${u.name} (${u.team})</option>`).join(''); }
@@ -527,9 +523,18 @@
 
                 <div id="nav-accounting" class="hidden">
                     <div class="border-t my-4"></div>
-                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 px-2">회계팀</div>
-                    <button class="nav-item w-full text-left px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-50 transition flex items-center gap-3" data-target="accounting">
-                        <i class="bi bi-calculator"></i> 지급 처리
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 px-2">회계팀 지급 처리</div>
+                    <button class="nav-item w-full text-left px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-50 transition flex items-center gap-3 text-sm" data-target="acc-paju">
+                        <i class="bi bi-building"></i> 동영(파주)
+                    </button>
+                    <button class="nav-item w-full text-left px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-50 transition flex items-center gap-3 text-sm" data-target="acc-yongin">
+                        <i class="bi bi-building"></i> 동영(용인)
+                    </button>
+                    <button class="nav-item w-full text-left px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-50 transition flex items-center gap-3 text-sm" data-target="acc-seoul">
+                        <i class="bi bi-building"></i> 동영(서울)
+                    </button>
+                    <button class="nav-item w-full text-left px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-50 transition flex items-center gap-3 text-sm" data-target="acc-tour">
+                        <i class="bi bi-airplane"></i> 동영투어
                     </button>
                 </div>
             </nav>
