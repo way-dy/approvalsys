@@ -15,6 +15,11 @@
         import { getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, query, where, orderBy, runTransaction, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
         import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js";
 
+        // =========================================================================
+        // [중요] 배포한 Google Apps Script 웹 앱 URL을 아래에 입력하세요.
+        // =========================================================================
+        const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwI1IWnXCGqCDdgX-DR1e-HlXfIzysEQqHnVT5tpkVWLPMxrHikktswVc1S_GgnZXc/exec"; 
+        
         // Firebase 설정
         const firebaseConfig = {
           apiKey: "AIzaSyAI_xl2HGC33VUA2synrNa23q448-pe0qQ",
@@ -100,7 +105,6 @@
                     const target = e.currentTarget.dataset.target;
                     loadDrafts(target);
                     
-                    // 모바일이면 닫기
                     if (window.innerWidth < 768) {
                         window.toggleSidebar();
                     }
@@ -114,6 +118,50 @@
             document.getElementById('btn-save-draft').addEventListener('click', saveDraft);
         }
 
+        // --- 구글 시트 연동 로직 (추가됨) ---
+        async function syncToGoogleSheet(draftData) {
+            if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes("여기에")) {
+                console.warn("Google Apps Script URL이 설정되지 않았습니다.");
+                return;
+            }
+            try {
+                // no-cors 모드는 브라우저 CORS 정책 우회용 (응답 내용을 읽을 순 없으나 전송은 됨)
+                await fetch(APPS_SCRIPT_URL, {
+                    method: 'POST',
+                    mode: 'no-cors', 
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(draftData)
+                });
+                console.log(`[Google Sheet Sync] ${draftData.docId} 전송 완료`);
+            } catch (error) {
+                console.error('[Google Sheet Sync] 전송 실패:', error);
+                showToast('구글 시트 연동 실패 (콘솔 확인)', true);
+            }
+        }
+
+        // 기존 데이터 일괄 동기화용 함수 (개발자 도구 콘솔에서 실행 가능)
+        window.syncAllDataOnce = async () => {
+            if (!confirm('전체 데이터를 구글 시트로 전송하시겠습니까? 시간이 걸릴 수 있습니다.')) return;
+            showLoading('전체 데이터 동기화 중...');
+            try {
+                const q = query(collection(db, 'drafts'));
+                const querySnapshot = await getDocs(q);
+                let count = 0;
+                for (const doc of querySnapshot.docs) {
+                    const data = { id: doc.id, ...doc.data() };
+                    await syncToGoogleSheet(data);
+                    count++;
+                    // API 속도 제한 고려 딜레이
+                    await new Promise(r => setTimeout(r, 300)); 
+                }
+                alert(`${count}건 동기화 완료`);
+            } catch(e) {
+                alert('동기화 중 오류: ' + e.message);
+            } finally {
+                hideLoading();
+            }
+        };
+
         async function syncMetaData() {
             try {
                 const usersDoc = await getDoc(doc(db, 'meta', 'users'));
@@ -123,14 +171,12 @@
             } catch (error) { console.error(error); }
         }
 
-        // --- 데이터 로드 로직 ---
         async function loadDrafts(listType) {
             const listContainer = document.getElementById('draft-list-container');
             listContainer.innerHTML = '<div class="flex justify-center p-10"><div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div></div>';
             document.getElementById('page-title').textContent = getTitleByListType(listType);
 
             try {
-                // 회계팀 법인별 메뉴일 때도 기본 정렬은 작성일 역순
                 const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'));
                 const querySnapshot = await getDocs(q);
                 let drafts = [];
@@ -148,7 +194,6 @@
             const isConfidential = draft.category === '대외비';
             const canViewConfidential = currentUser.role === '대표' || currentUser.confidentialAccess;
             
-            // 회계팀 공통 조건: 팀 확인, 대외비 권한 확인, 카테고리(경비/수리), 최종승인 완료, 미지급 상태
             const isAccountingTarget = (currentUser.team === '회계팀') && 
                                        (!isConfidential || canViewConfidential) &&
                                        ['경비', '직영수리비'].includes(draft.category) &&
@@ -161,13 +206,10 @@
                 case 'toApproveConfidential': if (!canViewConfidential) return false; return isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
                 case 'allDrafts': return !isConfidential;
                 case 'allConfidentialDrafts': return canViewConfidential && isConfidential;
-                
-                // [변경] 회계팀 법인별 필터링
                 case 'acc-paju': return isAccountingTarget && draft.corporation === '동영(파주)';
                 case 'acc-yongin': return isAccountingTarget && draft.corporation === '동영(용인)';
                 case 'acc-seoul': return isAccountingTarget && draft.corporation === '동영(서울)';
-                case 'acc-tour': return isAccountingTarget === true && draft.corporation === '동영투어'; // isAccountingTarget check
-                
+                case 'acc-tour': return isAccountingTarget === true && draft.corporation === '동영투어';
                 default: return false;
             }
         }
@@ -180,7 +222,6 @@
                 const docId = document.getElementById('input-doc-id').value;
                 const isNew = !docId;
                 const fileInput = document.getElementById('input-attachments');
-                // 수정 시 기존 첨부파일 유지, 새 파일은 추가됨
                 let attachments = isNew ? [] : (draftCache[docId]?.attachments || []);
                 
                 if (fileInput.files.length > 0) {
@@ -208,7 +249,6 @@
                     approver2Email: document.getElementById('input-approver2').value,
                     approver2Name: getUserNameByEmail(document.getElementById('input-approver2').value),
                     attachments: attachments,
-                    // 수정 모드일 때 작성자 정보 등은 유지
                     drafter: isNew ? currentUser.name : (draftCache[newDocId].drafter),
                     drafterEmail: isNew ? currentUser.email : (draftCache[newDocId].drafterEmail),
                     createdAt: isNew ? serverTimestamp() : (draftCache[newDocId].createdAt),
@@ -218,9 +258,13 @@
                     paymentDate: isNew ? null : (draftCache[newDocId].paymentDate || null)
                 };
                 
+                // Firestore 저장
                 if (isNew) await setDoc(doc(db, "drafts", newDocId), draftData);
                 else await updateDoc(doc(db, "drafts", newDocId), draftData);
                 
+                // [변경점] 구글 시트 연동 (전체 데이터 전송)
+                syncToGoogleSheet(draftData);
+
                 closeModal('modal-draft'); 
                 showToast(isNew ? '등록 완료' : '수정 완료');
                 loadDrafts(document.querySelector('.nav-item.active').dataset.target);
@@ -255,7 +299,14 @@
                     updateData.approval2Status = status; updateData.approval2Comment = comment;
                     if (status === '결재') updateData.finalApprovalDate = new Date().toISOString();
                 } else throw new Error('권한 없음');
+                
+                // Firestore 업데이트
                 await updateDoc(docRef, updateData);
+
+                // [변경점] 구글 시트 연동 (기존 데이터 + 변경 데이터 병합하여 전송)
+                const fullSyncedData = { ...draft, ...updateData };
+                syncToGoogleSheet(fullSyncedData);
+
                 closeModal('modal-detail'); showToast('처리 완료');
                 loadDrafts(document.querySelector('.nav-item.active').dataset.target);
             } catch (e) { alert('오류: ' + e.message); } finally { hideLoading(); }
@@ -265,10 +316,16 @@
             const dateVal = document.getElementById('detail-payment-date-input').value;
             if(!dateVal) return alert('날짜 선택');
             try { 
+                // Firestore 업데이트
                 await updateDoc(doc(db, 'drafts', docId), { paymentDate: dateVal }); 
+                
+                // [변경점] 구글 시트 연동
+                const draft = draftCache[docId];
+                const fullSyncedData = { ...draft, paymentDate: dateVal };
+                syncToGoogleSheet(fullSyncedData);
+
                 alert('저장 완료'); 
                 closeModal('modal-detail'); 
-                // 저장 후 현재 보고 있던 리스트 새로고침
                 loadDrafts(document.querySelector('.nav-item.active').dataset.target); 
             } catch(e) { alert(e.message); }
         }
@@ -284,7 +341,6 @@
             document.getElementById(viewId).classList.remove('hidden');
         }
 
-        // --- [변경] 목록 렌더링 (구분선 로직 제거) ---
         function renderDrafts(drafts, listType = '') {
             const container = document.getElementById('draft-list-container');
             container.innerHTML = '';
@@ -435,7 +491,6 @@
                 'toApproveConfidential': '결재(대외비)', 
                 'allDrafts': '전체 기안', 
                 'allConfidentialDrafts': '전체(대외비)',
-                // [변경] 타이틀 매핑 추가
                 'acc-paju': '지급 처리 - 동영(파주)',
                 'acc-yongin': '지급 처리 - 동영(용인)',
                 'acc-seoul': '지급 처리 - 동영(서울)',
