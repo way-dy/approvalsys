@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>동영관광 프리미엄 결재 시스템</title>
+    <title>동영관광 결재 시스템</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
@@ -114,7 +114,6 @@
             document.getElementById('btn-save-draft').addEventListener('click', saveDraft);
         }
 
-        // --- (기존 로직 함수들은 그대로 유지) ---
         async function syncMetaData() {
             try {
                 const usersDoc = await getDoc(doc(db, 'meta', 'users'));
@@ -124,6 +123,7 @@
             } catch (error) { console.error(error); }
         }
 
+        // --- [수정됨] 회계팀 목록일 때 법인별 정렬 로직 추가 ---
         async function loadDrafts(listType) {
             const listContainer = document.getElementById('draft-list-container');
             listContainer.innerHTML = '<div class="flex justify-center p-10"><div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div></div>';
@@ -134,8 +134,23 @@
                 const querySnapshot = await getDocs(q);
                 let drafts = [];
                 querySnapshot.forEach((doc) => { drafts.push({ id: doc.id, ...doc.data() }); });
-                const filteredDrafts = drafts.filter(draft => filterDraft(draft, listType));
-                renderDrafts(filteredDrafts);
+                
+                let filteredDrafts = drafts.filter(draft => filterDraft(draft, listType));
+
+                // 회계팀 화면일 경우 법인별로 정렬 (파주 -> 용인 -> 서울 -> 투어 -> 기타 순)
+                if (listType === 'accounting') {
+                    const corpOrder = ['동영(파주)', '동영(용인)', '동영(서울)', '동영투어'];
+                    filteredDrafts.sort((a, b) => {
+                        const indexA = corpOrder.indexOf(a.corporation);
+                        const indexB = corpOrder.indexOf(b.corporation);
+                        // 지정된 순서가 없으면(index가 -1) 가장 뒤로(999) 보냄
+                        const valA = indexA === -1 ? 999 : indexA;
+                        const valB = indexB === -1 ? 999 : indexB;
+                        return valA - valB;
+                    });
+                }
+
+                renderDrafts(filteredDrafts, listType);
             } catch (error) {
                 console.error(error);
                 listContainer.innerHTML = `<div class="text-center p-10 text-gray-500">데이터 로드 실패<br>${error.message}</div>`;
@@ -164,7 +179,9 @@
                 const docId = document.getElementById('input-doc-id').value;
                 const isNew = !docId;
                 const fileInput = document.getElementById('input-attachments');
+                // 수정 시 기존 첨부파일 유지, 새 파일은 추가됨
                 let attachments = isNew ? [] : (draftCache[docId]?.attachments || []);
+                
                 if (fileInput.files.length > 0) {
                     for (const file of fileInput.files) {
                         const storageRef = ref(storage, `attachments/${Date.now()}_${file.name}`);
@@ -173,8 +190,10 @@
                         attachments.push({ name: file.name, url: url });
                     }
                 }
+                
                 let newDocId = docId;
                 if (isNew) newDocId = await generateDocId();
+                
                 const draftData = {
                     docId: newDocId,
                     category: document.getElementById('input-category').value,
@@ -188,6 +207,7 @@
                     approver2Email: document.getElementById('input-approver2').value,
                     approver2Name: getUserNameByEmail(document.getElementById('input-approver2').value),
                     attachments: attachments,
+                    // 수정 모드일 때 작성자 정보 등은 유지
                     drafter: isNew ? currentUser.name : (draftCache[newDocId].drafter),
                     drafterEmail: isNew ? currentUser.email : (draftCache[newDocId].drafterEmail),
                     createdAt: isNew ? serverTimestamp() : (draftCache[newDocId].createdAt),
@@ -196,9 +216,12 @@
                     approval2Status: isNew ? null : (draftCache[newDocId].approval2Status || null),
                     paymentDate: isNew ? null : (draftCache[newDocId].paymentDate || null)
                 };
+                
                 if (isNew) await setDoc(doc(db, "drafts", newDocId), draftData);
                 else await updateDoc(doc(db, "drafts", newDocId), draftData);
-                closeModal('modal-draft'); showToast(isNew ? '등록 완료' : '수정 완료');
+                
+                closeModal('modal-draft'); 
+                showToast(isNew ? '등록 완료' : '수정 완료');
                 loadDrafts(document.querySelector('.nav-item.active').dataset.target);
             } catch (error) { console.error(error); showToast('오류 발생: ' + error.message, true); } finally { hideLoading(); }
         }
@@ -254,16 +277,29 @@
             document.getElementById(viewId).classList.remove('hidden');
         }
 
-        function renderDrafts(drafts) {
+        // --- [수정됨] 회계팀 목록일 때 법인 헤더 표시 기능 추가 ---
+        function renderDrafts(drafts, listType = '') {
             const container = document.getElementById('draft-list-container');
             container.innerHTML = '';
             if (drafts.length === 0) { container.innerHTML = `<div class="text-center p-10 text-gray-400">문서 없음</div>`; return; }
+            
+            let lastCorporation = '';
+
             drafts.forEach(draft => {
                 draftCache[draft.docId] = draft;
+                
+                // 회계팀 지급처리 화면이면 법인이 바뀔 때마다 구분선 헤더 추가
+                if (listType === 'accounting' && draft.corporation !== lastCorporation) {
+                    const header = document.createElement('div');
+                    header.className = "mt-6 mb-3 px-2 border-b-2 border-blue-600 pb-1 text-lg font-bold text-blue-800 flex items-center";
+                    header.innerHTML = `<i class="bi bi-building mr-2"></i> ${draft.corporation}`;
+                    container.appendChild(header);
+                    lastCorporation = draft.corporation;
+                }
+
                 const status = getDraftStatus(draft);
                 const isConfidential = draft.category === '대외비';
                 const card = document.createElement('div');
-                // 모바일 최적화: 높이 자동 조절, 여백 조정
                 card.className = `bg-white p-4 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition cursor-pointer mb-3 relative overflow-hidden group`;
                 card.onclick = () => openDetailModal(draft.docId);
                 card.innerHTML = `
@@ -302,6 +338,7 @@
             document.getElementById('modal-draft').classList.remove('hidden');
         }
 
+        // --- [수정됨] 상세화면에 '수정' 버튼 추가 로직 ---
         window.openDetailModal = (docId) => {
             const draft = draftCache[docId];
             if (!draft) return;
@@ -330,9 +367,16 @@
             btnArea.innerHTML = '';
             const isAppr1 = draft.approver1Email === currentUser.email && !draft.approval1Status;
             const isAppr2 = draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status;
+            
             if (isAppr1 || isAppr2) {
                 btnArea.innerHTML = `<button onclick="processApproval('${draft.docId}', 'approve')" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 mr-2 text-sm">승인</button><button onclick="processApproval('${draft.docId}', 'reject')" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm">반려</button>`;
             }
+
+            // [추가] 내가 쓴 글이고, 아직 1차 결재가 안 났으면 수정 가능
+            if (draft.drafterEmail === currentUser.email && !draft.approval1Status) {
+                btnArea.innerHTML += `<button onclick="editDraft('${draft.docId}')" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 mr-2 text-sm flex items-center gap-1"><i class="bi bi-pencil"></i> 수정</button>`;
+            }
+
             if (draft.approval2Status === '결재') {
                 btnArea.innerHTML += `<button onclick="window.print()" class="bg-gray-700 text-white px-4 py-2 rounded hover:bg-gray-800 ml-2 text-sm flex items-center gap-1"><i class="bi bi-printer"></i> 인쇄</button>`;
             }
@@ -346,6 +390,42 @@
             }
             modal.classList.remove('hidden');
         }
+
+        // --- [추가] 수정 버튼 클릭 시 실행되는 함수 ---
+        window.editDraft = (docId) => {
+            const draft = draftCache[docId];
+            if (!draft) return;
+
+            // 상세창 닫기
+            closeModal('modal-detail');
+            
+            // 작성 모달 열기 및 초기화
+            openNewDraftModal();
+            document.getElementById('draft-modal-title').textContent = '기안 수정';
+
+            // 데이터 채워넣기
+            document.getElementById('input-doc-id').value = draft.docId;
+            document.getElementById('input-category').value = draft.category;
+            document.getElementById('input-corporation').value = draft.corporation;
+            document.getElementById('input-title').value = draft.title;
+            document.getElementById('input-content').innerHTML = draft.content;
+            document.getElementById('input-ref').value = draft.ref || '';
+            document.getElementById('input-approver1').value = draft.approver1Email;
+            document.getElementById('input-approver2').value = draft.approver2Email;
+
+            // 참조 링크 복원
+            const linkWrapper = document.getElementById('ref-links-wrapper');
+            linkWrapper.innerHTML = '';
+            if (draft.refLinks && draft.refLinks.length > 0) {
+                draft.refLinks.forEach(link => {
+                     linkWrapper.insertAdjacentHTML('beforeend', `<div class="flex gap-2 mb-2 ref-link-row"><input type="text" value="${link.url}" class="flex-1 rounded-lg border-gray-300 border p-2 text-sm"><button type="button" onclick="this.parentElement.remove()" class="text-red-500"><i class="bi bi-trash"></i></button></div>`);
+                });
+            } else {
+                 linkWrapper.innerHTML = `<div class="flex gap-2 mb-2 ref-link-row"><input type="text" placeholder="URL" class="flex-1 rounded-lg border-gray-300 border p-2 text-sm"></div>`;
+            }
+
+            showToast('내용을 수정 후 저장하세요.');
+        };
 
         function renderApprovalStatus(elId, name, status, comment) {
             const container = document.getElementById(elId);
@@ -418,7 +498,7 @@
         <aside id="main-sidebar" class="fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-gray-200 flex flex-col shadow-lg transform -translate-x-full transition-transform duration-300 md:translate-x-0 md:static md:flex md:shadow-none">
             <div class="p-6 border-b border-gray-100 flex justify-between items-center">
                 <div class="flex items-center gap-3 text-blue-700 font-bold text-xl">
-                    <i class="bi bi-journal-bookmark-fill"></i> DY TOUR
+                    <i class="bi bi-journal-bookmark-fill"></i> 동영 기안서시스템
                 </div>
                 <button class="md:hidden text-gray-400" onclick="toggleSidebar()"><i class="bi bi-x-lg"></i></button>
             </div>
