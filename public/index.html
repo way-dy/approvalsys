@@ -43,6 +43,12 @@
         let userList = [];
         let repairMap = {};
         let draftCache = {};
+
+        // [추가] 페이지네이션 및 검색용 전역 변수
+        let currentPage = 1;          // 현재 페이지
+        const itemsPerPage = 10;      // 페이지당 보여줄 개수
+        let allFetchedData = [];      // 현재 탭의 전체 데이터(필터링 전)
+        let filteredDisplayData = []; // 검색까지 완료되어 화면에 보여질 데이터
         
         window.addEventListener('DOMContentLoaded', () => {
             initApp();
@@ -83,6 +89,11 @@
                 showToast('데이터를 새로고침합니다.');
                 const activeTab = document.querySelector('.nav-item.active').dataset.target;
                 loadDrafts(activeTab);
+            });
+
+            // [추가] 검색 입력 시 실시간 필터링 이벤트
+            document.getElementById('search-input').addEventListener('keyup', (e) => {
+                runSearch(e.target.value);
             });
             
             // 모바일 메뉴 토글 로직
@@ -176,23 +187,156 @@
             } catch (error) { console.error(error); }
         }
 
+        // [수정] 데이터 로드 로직 (렌더링 분리)
         async function loadDrafts(listType) {
             const listContainer = document.getElementById('draft-list-container');
+            // 로딩 표시 유지
             listContainer.innerHTML = '<div class="flex justify-center p-10"><div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div></div>';
             document.getElementById('page-title').textContent = getTitleByListType(listType);
+            
+            // 검색창 초기화
+            document.getElementById('search-input').value = '';
 
             try {
+                // [쿼리 최적화] 복잡한 인덱스 없이 클라이언트 필터링을 위해 전체 로드 (2,000건 정도는 문제없음)
                 const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'));
                 const querySnapshot = await getDocs(q);
                 let drafts = [];
                 querySnapshot.forEach((doc) => { drafts.push({ id: doc.id, ...doc.data() }); });
                 
-                let filteredDrafts = drafts.filter(draft => filterDraft(draft, listType));
-                renderDrafts(filteredDrafts, listType);
+                // 1차 필터링 (탭 구분에 따른 필터)
+                allFetchedData = drafts.filter(draft => filterDraft(draft, listType));
+                
+                // 검색 및 페이지네이션 초기화 후 렌더링 시작
+                currentPage = 1;
+                runSearch(''); 
+
             } catch (error) {
                 console.error(error);
                 listContainer.innerHTML = `<div class="text-center p-10 text-gray-500">데이터 로드 실패<br>${error.message}</div>`;
             }
+        }
+
+        // [추가] 검색어 필터링 로직
+        function runSearch(keyword) {
+            const term = keyword.toLowerCase().trim();
+            
+            if (!term) {
+                filteredDisplayData = allFetchedData;
+            } else {
+                filteredDisplayData = allFetchedData.filter(draft => {
+                    // 제목, 기안자 이름, 문서번호, 법인명 검색
+                    return (draft.title && draft.title.toLowerCase().includes(term)) ||
+                           (draft.drafter && draft.drafter.toLowerCase().includes(term)) ||
+                           (draft.docId && draft.docId.toLowerCase().includes(term)) ||
+                           (draft.corporation && draft.corporation.includes(term));
+                });
+            }
+            
+            // 검색하면 항상 1페이지로 리셋
+            currentPage = 1;
+            renderPaginatedItems();
+        }
+
+        // [추가] 페이지네이션 렌더링 (기존 renderDrafts 대체)
+        function renderPaginatedItems() {
+            const container = document.getElementById('draft-list-container');
+            container.innerHTML = ''; // 초기화
+
+            if (filteredDisplayData.length === 0) {
+                container.innerHTML = `<div class="text-center p-10 text-gray-400">문서가 없습니다.</div>`;
+                renderPaginationControls();
+                return;
+            }
+
+            // 데이터 슬라이싱 (Start ~ End)
+            const startIndex = (currentPage - 1) * itemsPerPage;
+            const endIndex = startIndex + itemsPerPage;
+            const pageItems = filteredDisplayData.slice(startIndex, endIndex);
+
+            // 실제 카드 생성
+            pageItems.forEach(draft => {
+                draftCache[draft.docId] = draft; // 상세보기를 위해 캐시 유지
+                
+                const status = getDraftStatus(draft);
+                const isConfidential = draft.category === '대외비';
+                const card = document.createElement('div');
+                
+                // 스타일 유지
+                card.className = `bg-white p-4 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition cursor-pointer mb-3 relative overflow-hidden group`;
+                card.onclick = () => openDetailModal(draft.docId);
+                card.innerHTML = `
+                    <div class="absolute left-0 top-0 bottom-0 w-1 ${status.colorClass}"></div>
+                    <div class="flex justify-between items-start mb-2 pl-3">
+                        <div class="flex-1 min-w-0 pr-2"> 
+                            <span class="text-xs font-semibold text-gray-400 mb-1 block truncate">${draft.docId} | ${draft.corporation}</span>
+                            <h3 class="text-lg font-bold text-gray-800 truncate">
+                                ${isConfidential ? '<i class="bi bi-shield-lock-fill text-red-500 mr-1"></i>' : ''}
+                                ${draft.title}
+                            </h3>
+                        </div>
+                        <span class="px-2 py-1 rounded-full text-xs font-bold whitespace-nowrap ${status.bgClass} ${status.textClass}">${status.text}</span>
+                    </div>
+                    <div class="flex justify-between items-center text-sm text-gray-500 pl-3">
+                        <span><i class="bi bi-person mr-1"></i>${draft.drafter}</span>
+                        <span>${draft.date.substring(5)}</span>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+
+            // 페이지네이션 컨트롤 그리기
+            renderPaginationControls();
+        }
+
+        // [추가] 하단 페이지네이션 버튼 생성
+        function renderPaginationControls() {
+            const container = document.getElementById('pagination-container');
+            container.innerHTML = '';
+            
+            const totalCount = filteredDisplayData.length;
+            if (totalCount === 0) return;
+
+            const totalPages = Math.ceil(totalCount / itemsPerPage);
+            
+            // 이전 버튼
+            const prevBtn = document.createElement('button');
+            prevBtn.className = `w-8 h-8 rounded-full flex items-center justify-center text-sm ${currentPage === 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`;
+            prevBtn.innerHTML = '<i class="bi bi-chevron-left"></i>';
+            prevBtn.disabled = currentPage === 1;
+            prevBtn.onclick = () => { if(currentPage > 1) { currentPage--; renderPaginatedItems(); container.scrollIntoView({block: "end"}); }};
+            container.appendChild(prevBtn);
+
+            // 페이지 번호 (최대 5개만 보여주기)
+            let startPage = Math.max(1, currentPage - 2);
+            let endPage = Math.min(totalPages, startPage + 4);
+            
+            if (endPage - startPage < 4) {
+                startPage = Math.max(1, endPage - 4);
+            }
+
+            for (let i = startPage; i <= endPage; i++) {
+                const btn = document.createElement('button');
+                const isActive = i === currentPage;
+                btn.className = `w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition ${isActive ? 'bg-blue-600 text-white shadow-md' : 'text-gray-600 hover:bg-gray-100'}`;
+                btn.textContent = i;
+                btn.onclick = () => { currentPage = i; renderPaginatedItems(); }; 
+                container.appendChild(btn);
+            }
+
+            // 다음 버튼
+            const nextBtn = document.createElement('button');
+            nextBtn.className = `w-8 h-8 rounded-full flex items-center justify-center text-sm ${currentPage === totalPages ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`;
+            nextBtn.innerHTML = '<i class="bi bi-chevron-right"></i>';
+            nextBtn.disabled = currentPage === totalPages;
+            nextBtn.onclick = () => { if(currentPage < totalPages) { currentPage++; renderPaginatedItems(); }};
+            container.appendChild(nextBtn);
+            
+            // 전체 건수 표시
+            const countSpan = document.createElement('span');
+            countSpan.className = "ml-4 text-xs text-gray-400 absolute right-4 hidden md:block";
+            countSpan.textContent = `총 ${totalCount}건`;
+            container.appendChild(countSpan);
         }
 
         function filterDraft(draft, listType) {
@@ -219,7 +363,6 @@
             }
         }
 
-        // [수정됨] 저장 로직: 전결 처리 기능 추가
         async function saveDraft() {
             const form = document.getElementById('draft-form');
             if (!form.checkValidity()) { form.reportValidity(); return; }
@@ -246,13 +389,9 @@
                 const approver1Input = document.getElementById('input-approver1').value;
                 const isJeonGyeol = approver1Input === '전결'; 
 
-                // 전결일 경우 설정값: 이메일은 dummy, 이름은 '전결', 상태는 '결재', 코멘트는 '전결 처리'
                 const app1Email = isJeonGyeol ? 'jeongyeol' : approver1Input;
                 const app1Name  = isJeonGyeol ? '전결' : getUserNameByEmail(approver1Input);
                 
-                // 상태 결정 로직: 
-                // 1. 전결이면 무조건 '결재'
-                // 2. 아니면 신규일 때는 null, 수정일 때는 기존 상태 유지
                 const app1Status = isJeonGyeol ? '결재' : (isNew ? null : (draftCache[newDocId].approval1Status || null));
                 const app1Comment = isJeonGyeol ? '전결 처리' : (isNew ? null : (draftCache[newDocId].approval1Comment || null));
                 // --- 전결 처리 로직 끝 ---
@@ -266,7 +405,6 @@
                     ref: document.getElementById('input-ref').value,
                     refLinks: getRefLinksFromDOM(),
                     
-                    // [변경] 위에서 계산한 1차 결재자 정보 적용
                     approver1Email: app1Email,
                     approver1Name: app1Name,
                     approval1Status: app1Status, 
@@ -284,14 +422,11 @@
                     paymentDate: isNew ? null : (draftCache[newDocId].paymentDate || null)
                 };
                 
-                // Firestore 저장
                 if (isNew) await setDoc(doc(db, "drafts", newDocId), draftData);
                 else await updateDoc(doc(db, "drafts", newDocId), draftData);
                 
-                // 구글 시트 연동
                 syncToGoogleSheet(draftData);
 
-                // 신규 기안일 경우 이메일 발송
                 if (isNew) {
                     sendEmailNotification('NEW', draftData);
                 }
@@ -299,7 +434,6 @@
                 closeModal('modal-draft'); 
                 showToast(isNew ? (isJeonGyeol ? '등록 완료 (1차 전결)' : '등록 완료') : '수정 완료');
                 
-                // 현재 탭 새로고침
                 const activeTab = document.querySelector('.nav-item.active').dataset.target;
                 loadDrafts(activeTab);
 
@@ -335,14 +469,11 @@
                     if (status === '결재') updateData.finalApprovalDate = new Date().toISOString();
                 } else throw new Error('권한 없음');
                 
-                // Firestore 업데이트
                 await updateDoc(docRef, updateData);
 
-                // 구글 시트 연동
                 const fullSyncedData = { ...draft, ...updateData };
                 syncToGoogleSheet(fullSyncedData);
 
-                // 결재 상태에 따른 이메일 발송
                 if (status === '반려') {
                     sendEmailNotification('REJECT', fullSyncedData);
                 } else if (status === '결재') {
@@ -389,39 +520,6 @@
             document.getElementById('login-view').classList.add('hidden');
             document.getElementById('app-view').classList.add('hidden');
             document.getElementById(viewId).classList.remove('hidden');
-        }
-
-        function renderDrafts(drafts, listType = '') {
-            const container = document.getElementById('draft-list-container');
-            container.innerHTML = '';
-            if (drafts.length === 0) { container.innerHTML = `<div class="text-center p-10 text-gray-400">문서 없음</div>`; return; }
-            
-            drafts.forEach(draft => {
-                draftCache[draft.docId] = draft;
-                
-                const status = getDraftStatus(draft);
-                const isConfidential = draft.category === '대외비';
-                const card = document.createElement('div');
-                card.className = `bg-white p-4 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition cursor-pointer mb-3 relative overflow-hidden group`;
-                card.onclick = () => openDetailModal(draft.docId);
-                card.innerHTML = `
-                    <div class="absolute left-0 top-0 bottom-0 w-1 ${status.colorClass}"></div>
-                    <div class="flex justify-between items-start mb-2 pl-3">
-                        <div class="flex-1 min-w-0 pr-2"> <span class="text-xs font-semibold text-gray-400 mb-1 block truncate">${draft.docId} | ${draft.corporation}</span>
-                            <h3 class="text-lg font-bold text-gray-800 truncate">
-                                ${isConfidential ? '<i class="bi bi-shield-lock-fill text-red-500 mr-1"></i>' : ''}
-                                ${draft.title}
-                            </h3>
-                        </div>
-                        <span class="px-2 py-1 rounded-full text-xs font-bold whitespace-nowrap ${status.bgClass} ${status.textClass}">${status.text}</span>
-                    </div>
-                    <div class="flex justify-between items-center text-sm text-gray-500 pl-3">
-                        <span><i class="bi bi-person mr-1"></i>${draft.drafter}</span>
-                        <span>${draft.date.substring(5)}</span>
-                    </div>
-                `;
-                container.appendChild(card);
-            });
         }
 
         function getDraftStatus(draft) {
@@ -553,15 +651,12 @@
             return map[type] || '목록';
         }
         
-        // [수정됨] 사용자 목록에 '전결' 옵션 추가
         function updateApproverList() { 
             const listContainer = document.getElementById('approvers-datalist');
             const userOptions = userList.map(u => `<option value="${u.email}">${u.name} (${u.team})</option>`).join('');
-            // '전결' 옵션을 맨 앞에 추가
             listContainer.innerHTML = `<option value="전결">1차 전결 (바로 2차 결재로 이동)</option>` + userOptions; 
         }
 
-        // [수정됨] 전결일 경우 이름 처리
         function getUserNameByEmail(email) { 
             if(email === '전결') return '전결';
             const u = userList.find(user => user.email === email); 
@@ -695,7 +790,18 @@
                 </div>
             </header>
 
-            <div id="draft-list-container" class="flex-1 overflow-y-auto p-4 md:p-8">
+            <div class="px-4 md:px-8 pt-4 pb-2">
+                <div class="relative">
+                    <input type="text" id="search-input" placeholder="제목, 기안자, 문서번호 검색..." 
+                        class="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors bg-white shadow-sm text-sm">
+                    <i class="bi bi-search absolute left-3.5 top-2.5 text-gray-400"></i>
+                </div>
+            </div>
+
+            <div id="draft-list-container" class="flex-1 overflow-y-auto p-4 md:p-8 pb-20">
+            </div>
+
+            <div id="pagination-container" class="bg-white border-t border-gray-200 p-3 flex justify-center items-center gap-2 sticky bottom-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
             </div>
         </main>
     </div>
