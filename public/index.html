@@ -20,6 +20,9 @@
         // =========================================================================
         const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwI1IWnXCGqCDdgX-DR1e-HlXfIzysEQqHnVT5tpkVWLPMxrHikktswVc1S_GgnZXc/exec"; 
         
+        // [변경점] 이메일 발송용 Google Apps Script URL (위와 동일한 스크립트를 사용한다면 같은 URL 입력)
+        const EMAIL_API_URL = "여기에_GAS_웹앱_URL_붙여넣기"; 
+
         // Firebase 설정
         const firebaseConfig = {
           apiKey: "AIzaSyAI_xl2HGC33VUA2synrNa23q448-pe0qQ",
@@ -118,7 +121,7 @@
             document.getElementById('btn-save-draft').addEventListener('click', saveDraft);
         }
 
-        // --- 구글 시트 연동 로직 (추가됨) ---
+        // --- 구글 시트 연동 로직 ---
         async function syncToGoogleSheet(draftData) {
             if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes("여기에")) {
                 console.warn("Google Apps Script URL이 설정되지 않았습니다.");
@@ -139,7 +142,32 @@
             }
         }
 
-        // 기존 데이터 일괄 동기화용 함수 (개발자 도구 콘솔에서 실행 가능)
+        // --- [추가] 이메일 발송 함수 ---
+        async function sendEmailNotification(type, draftData) {
+            if (!EMAIL_API_URL || EMAIL_API_URL.includes("여기에")) {
+                console.warn("이메일 API URL이 설정되지 않았습니다.");
+                return;
+            }
+            
+            console.log(`[Email Sending] Type: ${type}, Doc: ${draftData.docId}`);
+            
+            try {
+                await fetch(EMAIL_API_URL, {
+                    method: 'POST',
+                    mode: 'no-cors', 
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        type: type, // 'NEW', 'APPROVED', 'REJECT', 'REMIND'
+                        draft: draftData
+                    })
+                });
+                console.log('[Email Sent] 요청 완료');
+            } catch (error) {
+                console.error('[Email Failed] 전송 실패:', error);
+            }
+        }
+
+        // 기존 데이터 일괄 동기화용 함수
         window.syncAllDataOnce = async () => {
             if (!confirm('전체 데이터를 구글 시트로 전송하시겠습니까? 시간이 걸릴 수 있습니다.')) return;
             showLoading('전체 데이터 동기화 중...');
@@ -151,7 +179,6 @@
                     const data = { id: doc.id, ...doc.data() };
                     await syncToGoogleSheet(data);
                     count++;
-                    // API 속도 제한 고려 딜레이
                     await new Promise(r => setTimeout(r, 300)); 
                 }
                 alert(`${count}건 동기화 완료`);
@@ -262,8 +289,13 @@
                 if (isNew) await setDoc(doc(db, "drafts", newDocId), draftData);
                 else await updateDoc(doc(db, "drafts", newDocId), draftData);
                 
-                // [변경점] 구글 시트 연동 (전체 데이터 전송)
+                // 구글 시트 연동 (전체 데이터 전송)
                 syncToGoogleSheet(draftData);
+
+                // [변경점] 신규 기안일 경우 이메일 발송
+                if (isNew) {
+                    sendEmailNotification('NEW', draftData);
+                }
 
                 closeModal('modal-draft'); 
                 showToast(isNew ? '등록 완료' : '수정 완료');
@@ -307,9 +339,32 @@
                 const fullSyncedData = { ...draft, ...updateData };
                 syncToGoogleSheet(fullSyncedData);
 
+                // [변경점] 결재 상태에 따른 이메일 발송
+                if (status === '반려') {
+                    // 반려 시 기안자에게 알림
+                    sendEmailNotification('REJECT', fullSyncedData);
+                } else if (status === '결재') {
+                    if (draft.approver2Email === currentUser.email) {
+                        // 2차 결재(최종 승인) 시 기안자에게 알림
+                        sendEmailNotification('APPROVED', fullSyncedData);
+                    } else if (draft.approver1Email === currentUser.email) {
+                        // 1차 결재 승인 시 -> 2차 결재자에게 독촉(알림) 메일 보내기
+                        sendEmailNotification('REMIND', fullSyncedData); 
+                    }
+                }
+
                 closeModal('modal-detail'); showToast('처리 완료');
                 loadDrafts(document.querySelector('.nav-item.active').dataset.target);
             } catch (e) { alert('오류: ' + e.message); } finally { hideLoading(); }
+        };
+
+        // [추가] 수동 독촉 기능
+        window.triggerRemind = async (docId) => {
+            if(!confirm('현재 결재 대기자에게 독촉 이메일을 발송하시겠습니까?')) return;
+            const draft = draftCache[docId];
+            showToast('독촉 메일 발송 요청 중...');
+            await sendEmailNotification('REMIND', draft);
+            showToast('발송 요청 완료');
         };
 
         window.savePaymentDate = async (docId) => {
@@ -319,7 +374,7 @@
                 // Firestore 업데이트
                 await updateDoc(doc(db, 'drafts', docId), { paymentDate: dateVal }); 
                 
-                // [변경점] 구글 시트 연동
+                // 구글 시트 연동
                 const draft = draftCache[docId];
                 const fullSyncedData = { ...draft, paymentDate: dateVal };
                 syncToGoogleSheet(fullSyncedData);
@@ -425,6 +480,11 @@
 
             if (draft.drafterEmail === currentUser.email && !draft.approval1Status) {
                 btnArea.innerHTML += `<button onclick="editDraft('${draft.docId}')" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 mr-2 text-sm flex items-center gap-1"><i class="bi bi-pencil"></i> 수정</button>`;
+            }
+
+            // [추가] 기안자 본인이고, 아직 결재가 완료되지 않았을 때 '독촉하기' 버튼 표시
+            if (draft.drafterEmail === currentUser.email && !draft.paymentDate && draft.approval2Status !== '결재' && draft.approval1Status !== '반려' && draft.approval2Status !== '반려') {
+                btnArea.innerHTML += `<button onclick="triggerRemind('${draft.docId}')" class="bg-orange-500 text-white px-4 py-2 rounded hover:bg-orange-600 ml-2 text-sm flex items-center gap-1"><i class="bi bi-bell"></i> 독촉</button>`;
             }
 
             if (draft.approval2Status === '결재') {
