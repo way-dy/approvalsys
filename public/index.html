@@ -21,7 +21,7 @@
         const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwI1IWnXCGqCDdgX-DR1e-HlXfIzysEQqHnVT5tpkVWLPMxrHikktswVc1S_GgnZXc/exec"; 
         
         // [변경점] 이메일 발송용 Google Apps Script URL
-        const EMAIL_API_URL = "여기에_GAS_웹앱_URL_붙여넣기"; 
+        const EMAIL_API_URL = "https://script.google.com/macros/s/AKfycbzNAETA0XP7rE7AEvdwm8BriRQiI07ymw1cLyrt7wAjre2t5166VgF2NH_rQ4x6-H_Y1Q/exec"; 
 
         // Firebase 설정
         const firebaseConfig = {
@@ -219,6 +219,7 @@
             }
         }
 
+        // [수정됨] 저장 로직: 전결 처리 기능 추가
         async function saveDraft() {
             const form = document.getElementById('draft-form');
             if (!form.checkValidity()) { form.reportValidity(); return; }
@@ -241,6 +242,21 @@
                 let newDocId = docId;
                 if (isNew) newDocId = await generateDocId();
                 
+                // --- 전결 처리 로직 시작 ---
+                const approver1Input = document.getElementById('input-approver1').value;
+                const isJeonGyeol = approver1Input === '전결'; 
+
+                // 전결일 경우 설정값: 이메일은 dummy, 이름은 '전결', 상태는 '결재', 코멘트는 '전결 처리'
+                const app1Email = isJeonGyeol ? 'jeongyeol' : approver1Input;
+                const app1Name  = isJeonGyeol ? '전결' : getUserNameByEmail(approver1Input);
+                
+                // 상태 결정 로직: 
+                // 1. 전결이면 무조건 '결재'
+                // 2. 아니면 신규일 때는 null, 수정일 때는 기존 상태 유지
+                const app1Status = isJeonGyeol ? '결재' : (isNew ? null : (draftCache[newDocId].approval1Status || null));
+                const app1Comment = isJeonGyeol ? '전결 처리' : (isNew ? null : (draftCache[newDocId].approval1Comment || null));
+                // --- 전결 처리 로직 끝 ---
+
                 const draftData = {
                     docId: newDocId,
                     category: document.getElementById('input-category').value,
@@ -249,8 +265,13 @@
                     content: document.getElementById('input-content').innerHTML,
                     ref: document.getElementById('input-ref').value,
                     refLinks: getRefLinksFromDOM(),
-                    approver1Email: document.getElementById('input-approver1').value,
-                    approver1Name: getUserNameByEmail(document.getElementById('input-approver1').value),
+                    
+                    // [변경] 위에서 계산한 1차 결재자 정보 적용
+                    approver1Email: app1Email,
+                    approver1Name: app1Name,
+                    approval1Status: app1Status, 
+                    approval1Comment: app1Comment,
+
                     approver2Email: document.getElementById('input-approver2').value,
                     approver2Name: getUserNameByEmail(document.getElementById('input-approver2').value),
                     attachments: attachments,
@@ -258,7 +279,7 @@
                     drafterEmail: isNew ? currentUser.email : (draftCache[newDocId].drafterEmail),
                     createdAt: isNew ? serverTimestamp() : (draftCache[newDocId].createdAt),
                     date: isNew ? new Date().toISOString().split('T')[0] : (draftCache[newDocId].date),
-                    approval1Status: isNew ? null : (draftCache[newDocId].approval1Status || null),
+                    
                     approval2Status: isNew ? null : (draftCache[newDocId].approval2Status || null),
                     paymentDate: isNew ? null : (draftCache[newDocId].paymentDate || null)
                 };
@@ -276,8 +297,12 @@
                 }
 
                 closeModal('modal-draft'); 
-                showToast(isNew ? '등록 완료' : '수정 완료');
-                loadDrafts(document.querySelector('.nav-item.active').dataset.target);
+                showToast(isNew ? (isJeonGyeol ? '등록 완료 (1차 전결)' : '등록 완료') : '수정 완료');
+                
+                // 현재 탭 새로고침
+                const activeTab = document.querySelector('.nav-item.active').dataset.target;
+                loadDrafts(activeTab);
+
             } catch (error) { console.error(error); showToast('오류 발생: ' + error.message, true); } finally { hideLoading(); }
         }
 
@@ -527,8 +552,22 @@
             };
             return map[type] || '목록';
         }
-        function updateApproverList() { document.getElementById('approvers-datalist').innerHTML = userList.map(u => `<option value="${u.email}">${u.name} (${u.team})</option>`).join(''); }
-        function getUserNameByEmail(email) { const u = userList.find(user => user.email === email); return u ? u.name : email.split('@')[0]; }
+        
+        // [수정됨] 사용자 목록에 '전결' 옵션 추가
+        function updateApproverList() { 
+            const listContainer = document.getElementById('approvers-datalist');
+            const userOptions = userList.map(u => `<option value="${u.email}">${u.name} (${u.team})</option>`).join('');
+            // '전결' 옵션을 맨 앞에 추가
+            listContainer.innerHTML = `<option value="전결">1차 전결 (바로 2차 결재로 이동)</option>` + userOptions; 
+        }
+
+        // [수정됨] 전결일 경우 이름 처리
+        function getUserNameByEmail(email) { 
+            if(email === '전결') return '전결';
+            const u = userList.find(user => user.email === email); 
+            return u ? u.name : email.split('@')[0]; 
+        }
+
         window.addRefLinkInput = () => { document.getElementById('ref-links-wrapper').insertAdjacentHTML('beforeend', `<div class="flex gap-2 mb-2 ref-link-row"><input type="text" placeholder="URL" class="flex-1 rounded-lg border-gray-300 border p-2.5 text-sm w-full"><button type="button" onclick="this.parentElement.remove()" class="text-red-500"><i class="bi bi-trash"></i></button></div>`); }
         function getRefLinksFromDOM() { const links = []; document.querySelectorAll('.ref-link-row input').forEach(input => { if(input.value.trim()) links.push({ url: input.value.trim() }); }); return links; }
 
