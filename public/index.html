@@ -44,11 +44,11 @@
         let repairMap = {};
         let draftCache = {};
 
-        // [추가] 페이지네이션 및 검색용 전역 변수
-        let currentPage = 1;          // 현재 페이지
-        const itemsPerPage = 10;      // 페이지당 보여줄 개수
-        let allFetchedData = [];      // 현재 탭의 전체 데이터(필터링 전)
-        let filteredDisplayData = []; // 검색까지 완료되어 화면에 보여질 데이터
+        // 페이지네이션 및 검색용 전역 변수
+        let currentPage = 1;          
+        const itemsPerPage = 10;      
+        let allFetchedData = [];      
+        let filteredDisplayData = []; 
         
         window.addEventListener('DOMContentLoaded', () => {
             initApp();
@@ -91,7 +91,7 @@
                 loadDrafts(activeTab);
             });
 
-            // [추가] 검색 입력 시 실시간 필터링 이벤트
+            // 검색 입력 시 실시간 필터링 이벤트
             document.getElementById('search-input').addEventListener('keyup', (e) => {
                 runSearch(e.target.value);
             });
@@ -111,7 +111,6 @@
                 }
             };
 
-            // 메뉴 아이템 클릭 시 모바일 메뉴 자동 닫기
             document.querySelectorAll('.nav-item').forEach(item => {
                 item.addEventListener('click', (e) => {
                     document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active', 'bg-blue-50', 'text-blue-600'));
@@ -132,14 +131,12 @@
             document.getElementById('btn-save-draft').addEventListener('click', saveDraft);
         }
 
-        // --- 구글 시트 연동 로직 ---
         async function syncToGoogleSheet(draftData) {
             if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes("여기에")) {
                 console.warn("Google Apps Script URL이 설정되지 않았습니다.");
                 return;
             }
             try {
-                // no-cors 모드는 브라우저 CORS 정책 우회용
                 await fetch(APPS_SCRIPT_URL, {
                     method: 'POST',
                     mode: 'no-cors', 
@@ -153,7 +150,6 @@
             }
         }
 
-        // --- 이메일 발송 함수 ---
         async function sendEmailNotification(type, draftData) {
             if (!EMAIL_API_URL || EMAIL_API_URL.includes("여기에")) {
                 console.warn("이메일 API URL이 설정되지 않았습니다.");
@@ -168,7 +164,7 @@
                     mode: 'no-cors', 
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        type: type, // 'NEW', 'APPROVED', 'REJECT', 'REMIND'
+                        type: type, 
                         draft: draftData
                     })
                 });
@@ -181,33 +177,47 @@
         async function syncMetaData() {
             try {
                 const usersDoc = await getDoc(doc(db, 'meta', 'users'));
-                if (usersDoc.exists()) { userList = usersDoc.data().list || []; updateApproverList(); }
+                if (usersDoc.exists()) { 
+                    userList = usersDoc.data().list || []; 
+                    updateApproverList(); 
+                    updateRefDeptList(); // [추가] 부서 목록 업데이트 호출
+                }
                 const repairDoc = await getDoc(doc(db, 'meta', 'repairMap'));
                 if (repairDoc.exists()) { repairMap = repairDoc.data().map || {}; }
             } catch (error) { console.error(error); }
         }
 
-        // [수정] 데이터 로드 로직 (렌더링 분리)
+        // [추가] 직원 목록에서 부서만 추출하여 참조 부서 드롭다운 생성
+        function updateRefDeptList() {
+            const select = document.getElementById('input-ref');
+            if(!select) return;
+
+            // userList에서 team이 있는 경우만 추출, 중복 제거
+            const teams = [...new Set(userList.map(u => u.team).filter(t => t && t.trim() !== ''))].sort();
+
+            let html = '<option value="">선택 안함</option>';
+            teams.forEach(team => {
+                html += `<option value="${team}">${team}</option>`;
+            });
+            html += '<option value="전체">전체</option>'; // '전체' 옵션 수동 추가
+
+            select.innerHTML = html;
+        }
+
         async function loadDrafts(listType) {
             const listContainer = document.getElementById('draft-list-container');
-            // 로딩 표시 유지
             listContainer.innerHTML = '<div class="flex justify-center p-10"><div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div></div>';
             document.getElementById('page-title').textContent = getTitleByListType(listType);
-            
-            // 검색창 초기화
             document.getElementById('search-input').value = '';
 
             try {
-                // [쿼리 최적화] 복잡한 인덱스 없이 클라이언트 필터링을 위해 전체 로드
                 const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'));
                 const querySnapshot = await getDocs(q);
                 let drafts = [];
                 querySnapshot.forEach((doc) => { drafts.push({ id: doc.id, ...doc.data() }); });
                 
-                // 1차 필터링 (탭 구분에 따른 필터)
                 allFetchedData = drafts.filter(draft => filterDraft(draft, listType));
                 
-                // 검색 및 페이지네이션 초기화 후 렌더링 시작
                 currentPage = 1;
                 runSearch(''); 
 
@@ -217,31 +227,25 @@
             }
         }
 
-        // [추가] 검색어 필터링 로직
         function runSearch(keyword) {
             const term = keyword.toLowerCase().trim();
-            
             if (!term) {
                 filteredDisplayData = allFetchedData;
             } else {
                 filteredDisplayData = allFetchedData.filter(draft => {
-                    // 제목, 기안자 이름, 문서번호, 법인명 검색
                     return (draft.title && draft.title.toLowerCase().includes(term)) ||
                            (draft.drafter && draft.drafter.toLowerCase().includes(term)) ||
                            (draft.docId && draft.docId.toLowerCase().includes(term)) ||
                            (draft.corporation && draft.corporation.includes(term));
                 });
             }
-            
-            // 검색하면 항상 1페이지로 리셋
             currentPage = 1;
             renderPaginatedItems();
         }
 
-        // [추가] 페이지네이션 렌더링 (기존 renderDrafts 대체)
         function renderPaginatedItems() {
             const container = document.getElementById('draft-list-container');
-            container.innerHTML = ''; // 초기화
+            container.innerHTML = ''; 
 
             if (filteredDisplayData.length === 0) {
                 container.innerHTML = `<div class="text-center p-10 text-gray-400">문서가 없습니다.</div>`;
@@ -249,20 +253,17 @@
                 return;
             }
 
-            // 데이터 슬라이싱 (Start ~ End)
             const startIndex = (currentPage - 1) * itemsPerPage;
             const endIndex = startIndex + itemsPerPage;
             const pageItems = filteredDisplayData.slice(startIndex, endIndex);
 
-            // 실제 카드 생성
             pageItems.forEach(draft => {
-                draftCache[draft.docId] = draft; // 상세보기를 위해 캐시 유지
+                draftCache[draft.docId] = draft; 
                 
                 const status = getDraftStatus(draft);
                 const isConfidential = draft.category === '대외비';
                 const card = document.createElement('div');
                 
-                // 스타일 유지
                 card.className = `bg-white p-4 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition cursor-pointer mb-3 relative overflow-hidden group`;
                 card.onclick = () => openDetailModal(draft.docId);
                 card.innerHTML = `
@@ -285,11 +286,9 @@
                 container.appendChild(card);
             });
 
-            // 페이지네이션 컨트롤 그리기
             renderPaginationControls();
         }
 
-        // [추가] 하단 페이지네이션 버튼 생성
         function renderPaginationControls() {
             const container = document.getElementById('pagination-container');
             container.innerHTML = '';
@@ -299,7 +298,6 @@
 
             const totalPages = Math.ceil(totalCount / itemsPerPage);
             
-            // 이전 버튼
             const prevBtn = document.createElement('button');
             prevBtn.className = `w-8 h-8 rounded-full flex items-center justify-center text-sm ${currentPage === 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`;
             prevBtn.innerHTML = '<i class="bi bi-chevron-left"></i>';
@@ -307,7 +305,6 @@
             prevBtn.onclick = () => { if(currentPage > 1) { currentPage--; renderPaginatedItems(); container.scrollIntoView({block: "end"}); }};
             container.appendChild(prevBtn);
 
-            // 페이지 번호 (최대 5개만 보여주기)
             let startPage = Math.max(1, currentPage - 2);
             let endPage = Math.min(totalPages, startPage + 4);
             
@@ -324,7 +321,6 @@
                 container.appendChild(btn);
             }
 
-            // 다음 버튼
             const nextBtn = document.createElement('button');
             nextBtn.className = `w-8 h-8 rounded-full flex items-center justify-center text-sm ${currentPage === totalPages ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`;
             nextBtn.innerHTML = '<i class="bi bi-chevron-right"></i>';
@@ -332,7 +328,6 @@
             nextBtn.onclick = () => { if(currentPage < totalPages) { currentPage++; renderPaginatedItems(); }};
             container.appendChild(nextBtn);
             
-            // 전체 건수 표시
             const countSpan = document.createElement('span');
             countSpan.className = "ml-4 text-xs text-gray-400 absolute right-4 hidden md:block";
             countSpan.textContent = `총 ${totalCount}건`;
@@ -385,7 +380,6 @@
                 let newDocId = docId;
                 if (isNew) newDocId = await generateDocId();
                 
-                // --- 전결 처리 로직 시작 ---
                 const approver1Input = document.getElementById('input-approver1').value;
                 const isJeonGyeol = approver1Input === '전결'; 
 
@@ -394,7 +388,6 @@
                 
                 const app1Status = isJeonGyeol ? '결재' : (isNew ? null : (draftCache[newDocId].approval1Status || null));
                 const app1Comment = isJeonGyeol ? '전결 처리' : (isNew ? null : (draftCache[newDocId].approval1Comment || null));
-                // --- 전결 처리 로직 끝 ---
 
                 const draftData = {
                     docId: newDocId,
@@ -535,7 +528,6 @@
             document.getElementById('input-content').innerHTML = '';
             document.getElementById('draft-modal-title').textContent = '새 기안 작성';
             
-            // [변경] 링크 초기화
             document.getElementById('ref-links-wrapper').innerHTML = `
                 <div class="flex gap-2 mb-2 ref-link-row items-center">
                     <input type="text" placeholder="링크 제목" class="w-1/3 rounded-lg border-gray-300 border p-2.5 text-sm focus:outline-none focus:border-blue-500">
@@ -552,7 +544,6 @@
             document.getElementById('detail-doc-id').textContent = draft.docId;
             document.getElementById('detail-title').textContent = draft.title;
             
-            // [변경] 참조 부서 표시 추가
             const refDept = draft.ref ? ` | 참조: ${draft.ref}` : '';
 
             document.getElementById('detail-info').innerHTML = `
@@ -570,7 +561,6 @@
             const linksContainer = document.getElementById('detail-links');
             linksContainer.innerHTML = '';
             
-            // [변경] 링크 렌더링 수정
             if (draft.refLinks) {
                 draft.refLinks.forEach(link => {
                     const url = link.url || link; 
@@ -641,7 +631,6 @@
             const linkWrapper = document.getElementById('ref-links-wrapper');
             linkWrapper.innerHTML = '';
             
-            // [변경] 기존 링크(제목+URL) 복원
             if (draft.refLinks && draft.refLinks.length > 0) {
                 draft.refLinks.forEach(link => {
                      const titleVal = link.title || '';
@@ -703,7 +692,6 @@
             return u ? u.name : email.split('@')[0]; 
         }
 
-        // [변경] 링크 추가 버튼 로직 (제목+URL)
         window.addRefLinkInput = () => { 
             document.getElementById('ref-links-wrapper').insertAdjacentHTML('beforeend', `
             <div class="flex gap-2 mb-2 ref-link-row items-center">
@@ -713,7 +701,6 @@
             </div>`); 
         }
         
-        // [변경] 저장 시 링크 데이터 추출 (제목+URL 객체 배열)
         function getRefLinksFromDOM() { 
             const links = []; 
             document.querySelectorAll('.ref-link-row').forEach(row => { 
@@ -934,14 +921,7 @@
                         <div class="mb-3">
                              <label class="block text-sm font-bold text-gray-700 mb-2">참조 부서</label>
                              <select id="input-ref" class="w-full rounded-lg border-gray-300 border p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white">
-                                 <option value="">선택 안함</option>
-                                 <option value="회계팀">회계팀</option>
-                                 <option value="경영지원실">경영지원실</option>
-                                 <option value="인사팀">인사팀</option>
-                                 <option value="영업팀">영업팀</option>
-                                 <option value="운영팀">운영팀</option>
-                                 <option value="임원실">임원실</option>
-                                 <option value="전체">전체</option>
+                                 <option value="">불러오는 중...</option>
                              </select>
                         </div>
 
