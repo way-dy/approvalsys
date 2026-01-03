@@ -198,7 +198,7 @@
             document.getElementById('search-input').value = '';
 
             try {
-                // [쿼리 최적화] 복잡한 인덱스 없이 클라이언트 필터링을 위해 전체 로드 (2,000건 정도는 문제없음)
+                // [쿼리 최적화] 복잡한 인덱스 없이 클라이언트 필터링을 위해 전체 로드
                 const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'));
                 const querySnapshot = await getDocs(q);
                 let drafts = [];
@@ -534,7 +534,14 @@
             document.getElementById('input-doc-id').value = '';
             document.getElementById('input-content').innerHTML = '';
             document.getElementById('draft-modal-title').textContent = '새 기안 작성';
-            document.getElementById('ref-links-wrapper').innerHTML = `<div class="flex gap-2 mb-2 ref-link-row"><input type="text" placeholder="URL" class="flex-1 rounded-lg border-gray-300 border p-2.5 text-sm w-full"><button type="button" onclick="this.parentElement.remove()" class="text-red-500"><i class="bi bi-trash"></i></button></div>`;
+            
+            // [변경] 링크 초기화
+            document.getElementById('ref-links-wrapper').innerHTML = `
+                <div class="flex gap-2 mb-2 ref-link-row items-center">
+                    <input type="text" placeholder="링크 제목" class="w-1/3 rounded-lg border-gray-300 border p-2.5 text-sm focus:outline-none focus:border-blue-500">
+                    <input type="text" placeholder="URL (https://...)" class="flex-1 rounded-lg border-gray-300 border p-2.5 text-sm focus:outline-none focus:border-blue-500">
+                    <button type="button" onclick="this.parentElement.remove()" class="text-red-500 hover:bg-red-50 p-2 rounded transition"><i class="bi bi-trash"></i></button>
+                </div>`;
             document.getElementById('modal-draft').classList.remove('hidden');
         }
 
@@ -544,16 +551,39 @@
             const modal = document.getElementById('modal-detail');
             document.getElementById('detail-doc-id').textContent = draft.docId;
             document.getElementById('detail-title').textContent = draft.title;
+            
+            // [변경] 참조 부서 표시 추가
+            const refDept = draft.ref ? ` | 참조: ${draft.ref}` : '';
+
             document.getElementById('detail-info').innerHTML = `
-                <span class="mr-2 badge bg-gray-100 px-2 py-1 rounded text-xs">${draft.corporation}</span>
-                <span class="mr-2 badge bg-gray-100 px-2 py-1 rounded text-xs">${draft.category}</span>
-                <div class="mt-1 text-xs text-gray-500">기안자: ${draft.drafter} | 일자: ${draft.date}</div>
+                <span class="mr-2 badge bg-gray-100 px-2 py-1 rounded text-xs border border-gray-200">${draft.corporation}</span>
+                <span class="mr-2 badge bg-gray-100 px-2 py-1 rounded text-xs border border-gray-200">${draft.category}</span>
+                <div class="mt-2 text-xs text-gray-500 flex items-center gap-2">
+                    <span><i class="bi bi-person"></i> ${draft.drafter}</span>
+                    <span class="text-gray-300">|</span>
+                    <span>${draft.date}</span>
+                    ${refDept ? `<span class="text-blue-600 font-medium">${refDept}</span>` : ''}
+                </div>
             `;
             document.getElementById('detail-content').innerHTML = draft.content;
             
             const linksContainer = document.getElementById('detail-links');
             linksContainer.innerHTML = '';
-            if (draft.refLinks) draft.refLinks.forEach(link => linksContainer.innerHTML += `<a href="${link.url}" target="_blank" class="block text-blue-500 hover:underline mb-1 truncate text-sm"><i class="bi bi-link-45deg"></i> ${link.url}</a>`);
+            
+            // [변경] 링크 렌더링 수정
+            if (draft.refLinks) {
+                draft.refLinks.forEach(link => {
+                    const url = link.url || link; 
+                    const title = link.title || url;
+                    
+                    linksContainer.innerHTML += `
+                        <a href="${url}" target="_blank" class="flex items-center gap-2 bg-blue-50 hover:bg-blue-100 border border-blue-100 text-blue-700 px-3 py-2 rounded-lg mb-2 transition group">
+                            <i class="bi bi-link-45deg text-lg group-hover:scale-110 transition-transform"></i>
+                            <span class="text-sm font-medium truncate">${title}</span>
+                            <i class="bi bi-box-arrow-up-right text-xs ml-auto opacity-50"></i>
+                        </a>`;
+                });
+            }
 
             const filesContainer = document.getElementById('detail-files');
             filesContainer.innerHTML = '';
@@ -568,19 +598,19 @@
             const isAppr2 = draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status;
             
             if (isAppr1 || isAppr2) {
-                btnArea.innerHTML = `<button onclick="processApproval('${draft.docId}', 'approve')" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 mr-2 text-sm">승인</button><button onclick="processApproval('${draft.docId}', 'reject')" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm">반려</button>`;
+                btnArea.innerHTML = `<button onclick="processApproval('${draft.docId}', 'approve')" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 mr-2 text-sm shadow-sm">승인</button><button onclick="processApproval('${draft.docId}', 'reject')" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm shadow-sm">반려</button>`;
             }
 
             if (draft.drafterEmail === currentUser.email && !draft.approval1Status) {
-                btnArea.innerHTML += `<button onclick="editDraft('${draft.docId}')" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 mr-2 text-sm flex items-center gap-1"><i class="bi bi-pencil"></i> 수정</button>`;
+                btnArea.innerHTML += `<button onclick="editDraft('${draft.docId}')" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 mr-2 text-sm flex items-center gap-1 shadow-sm"><i class="bi bi-pencil"></i> 수정</button>`;
             }
 
             if (draft.drafterEmail === currentUser.email && !draft.paymentDate && draft.approval2Status !== '결재' && draft.approval1Status !== '반려' && draft.approval2Status !== '반려') {
-                btnArea.innerHTML += `<button onclick="triggerRemind('${draft.docId}')" class="bg-orange-500 text-white px-4 py-2 rounded hover:bg-orange-600 ml-2 text-sm flex items-center gap-1"><i class="bi bi-bell"></i> 독촉</button>`;
+                btnArea.innerHTML += `<button onclick="triggerRemind('${draft.docId}')" class="bg-orange-500 text-white px-4 py-2 rounded hover:bg-orange-600 ml-2 text-sm flex items-center gap-1 shadow-sm"><i class="bi bi-bell"></i> 독촉</button>`;
             }
 
             if (draft.approval2Status === '결재') {
-                btnArea.innerHTML += `<button onclick="window.print()" class="bg-gray-700 text-white px-4 py-2 rounded hover:bg-gray-800 ml-2 text-sm flex items-center gap-1"><i class="bi bi-printer"></i> 인쇄</button>`;
+                btnArea.innerHTML += `<button onclick="window.print()" class="bg-gray-700 text-white px-4 py-2 rounded hover:bg-gray-800 ml-2 text-sm flex items-center gap-1 shadow-sm"><i class="bi bi-printer"></i> 인쇄</button>`;
             }
 
             const paymentArea = document.getElementById('detail-payment-area');
@@ -610,12 +640,22 @@
             
             const linkWrapper = document.getElementById('ref-links-wrapper');
             linkWrapper.innerHTML = '';
+            
+            // [변경] 기존 링크(제목+URL) 복원
             if (draft.refLinks && draft.refLinks.length > 0) {
                 draft.refLinks.forEach(link => {
-                     linkWrapper.insertAdjacentHTML('beforeend', `<div class="flex gap-2 mb-2 ref-link-row"><input type="text" value="${link.url}" class="flex-1 rounded-lg border-gray-300 border p-2.5 text-sm w-full"><button type="button" onclick="this.parentElement.remove()" class="text-red-500"><i class="bi bi-trash"></i></button></div>`);
+                     const titleVal = link.title || '';
+                     const urlVal = link.url || link;
+                     
+                     linkWrapper.insertAdjacentHTML('beforeend', `
+                        <div class="flex gap-2 mb-2 ref-link-row items-center">
+                            <input type="text" value="${titleVal}" placeholder="링크 제목" class="w-1/3 rounded-lg border-gray-300 border p-2.5 text-sm">
+                            <input type="text" value="${urlVal}" placeholder="URL" class="flex-1 rounded-lg border-gray-300 border p-2.5 text-sm">
+                            <button type="button" onclick="this.parentElement.remove()" class="text-red-500 hover:bg-red-50 p-2 rounded transition"><i class="bi bi-trash"></i></button>
+                        </div>`);
                 });
             } else {
-                 linkWrapper.innerHTML = `<div class="flex gap-2 mb-2 ref-link-row"><input type="text" placeholder="URL" class="flex-1 rounded-lg border-gray-300 border p-2.5 text-sm w-full"><button type="button" onclick="this.parentElement.remove()" class="text-red-500"><i class="bi bi-trash"></i></button></div>`;
+                 addRefLinkInput();
             }
             showToast('내용을 수정 후 저장하세요.');
         };
@@ -663,8 +703,29 @@
             return u ? u.name : email.split('@')[0]; 
         }
 
-        window.addRefLinkInput = () => { document.getElementById('ref-links-wrapper').insertAdjacentHTML('beforeend', `<div class="flex gap-2 mb-2 ref-link-row"><input type="text" placeholder="URL" class="flex-1 rounded-lg border-gray-300 border p-2.5 text-sm w-full"><button type="button" onclick="this.parentElement.remove()" class="text-red-500"><i class="bi bi-trash"></i></button></div>`); }
-        function getRefLinksFromDOM() { const links = []; document.querySelectorAll('.ref-link-row input').forEach(input => { if(input.value.trim()) links.push({ url: input.value.trim() }); }); return links; }
+        // [변경] 링크 추가 버튼 로직 (제목+URL)
+        window.addRefLinkInput = () => { 
+            document.getElementById('ref-links-wrapper').insertAdjacentHTML('beforeend', `
+            <div class="flex gap-2 mb-2 ref-link-row items-center">
+                <input type="text" placeholder="링크 제목" class="w-1/3 rounded-lg border-gray-300 border p-2.5 text-sm focus:outline-none focus:border-blue-500">
+                <input type="text" placeholder="URL" class="flex-1 rounded-lg border-gray-300 border p-2.5 text-sm focus:outline-none focus:border-blue-500">
+                <button type="button" onclick="this.parentElement.remove()" class="text-red-500 hover:bg-red-50 p-2 rounded transition"><i class="bi bi-trash"></i></button>
+            </div>`); 
+        }
+        
+        // [변경] 저장 시 링크 데이터 추출 (제목+URL 객체 배열)
+        function getRefLinksFromDOM() { 
+            const links = []; 
+            document.querySelectorAll('.ref-link-row').forEach(row => { 
+                const inputs = row.querySelectorAll('input');
+                const title = inputs[0].value.trim();
+                const url = inputs[1].value.trim();
+                if(url) { 
+                    links.push({ title: title || url, url: url }); 
+                } 
+            }); 
+            return links; 
+        }
 
     </script>
 
@@ -872,7 +933,16 @@
                         
                         <div class="mb-3">
                              <label class="block text-sm font-bold text-gray-700 mb-2">참조 부서</label>
-                             <input type="text" id="input-ref" class="w-full rounded-lg border-gray-300 border p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="예: 인사팀, 경영지원실">
+                             <select id="input-ref" class="w-full rounded-lg border-gray-300 border p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white">
+                                 <option value="">선택 안함</option>
+                                 <option value="회계팀">회계팀</option>
+                                 <option value="경영지원실">경영지원실</option>
+                                 <option value="인사팀">인사팀</option>
+                                 <option value="영업팀">영업팀</option>
+                                 <option value="운영팀">운영팀</option>
+                                 <option value="임원실">임원실</option>
+                                 <option value="전체">전체</option>
+                             </select>
                         </div>
 
                         <div>
