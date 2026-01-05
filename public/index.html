@@ -180,26 +180,24 @@
                 if (usersDoc.exists()) { 
                     userList = usersDoc.data().list || []; 
                     updateApproverList(); 
-                    updateRefDeptList(); // [추가] 부서 목록 업데이트 호출
+                    updateRefDeptList(); 
                 }
                 const repairDoc = await getDoc(doc(db, 'meta', 'repairMap'));
                 if (repairDoc.exists()) { repairMap = repairDoc.data().map || {}; }
             } catch (error) { console.error(error); }
         }
 
-        // [추가] 직원 목록에서 부서만 추출하여 참조 부서 드롭다운 생성
         function updateRefDeptList() {
             const select = document.getElementById('input-ref');
             if(!select) return;
 
-            // userList에서 team이 있는 경우만 추출, 중복 제거
             const teams = [...new Set(userList.map(u => u.team).filter(t => t && t.trim() !== ''))].sort();
 
             let html = '<option value="">선택 안함</option>';
             teams.forEach(team => {
                 html += `<option value="${team}">${team}</option>`;
             });
-            html += '<option value="전체">전체</option>'; // '전체' 옵션 수동 추가
+            html += '<option value="전체">전체</option>';
 
             select.innerHTML = html;
         }
@@ -243,6 +241,7 @@
             renderPaginatedItems();
         }
 
+        // [수정] PC 버전 상태 뱃지 시인성 개선 적용
         function renderPaginatedItems() {
             const container = document.getElementById('draft-list-container');
             container.innerHTML = ''; 
@@ -266,6 +265,8 @@
                 
                 card.className = `bg-white p-4 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition cursor-pointer mb-3 relative overflow-hidden group`;
                 card.onclick = () => openDetailModal(draft.docId);
+                
+                // 상태 뱃지에 md: 클래스와 테두리/그림자 추가
                 card.innerHTML = `
                     <div class="absolute left-0 top-0 bottom-0 w-1 ${status.colorClass}"></div>
                     <div class="flex justify-between items-start mb-2 pl-3">
@@ -276,7 +277,9 @@
                                 ${draft.title}
                             </h3>
                         </div>
-                        <span class="px-2 py-1 rounded-full text-xs font-bold whitespace-nowrap ${status.bgClass} ${status.textClass}">${status.text}</span>
+                        <span class="px-2 py-1 md:px-3 md:py-1.5 rounded-full text-xs md:text-sm font-bold whitespace-nowrap shadow-sm border border-opacity-20 ${status.bgClass} ${status.textClass} border-current">
+                            ${status.text}
+                        </span>
                     </div>
                     <div class="flex justify-between items-center text-sm text-gray-500 pl-3">
                         <span><i class="bi bi-person mr-1"></i>${draft.drafter}</span>
@@ -358,10 +361,19 @@
             }
         }
 
+        // [수정] 중복 저장 방지 로직 추가
         async function saveDraft() {
             const form = document.getElementById('draft-form');
             if (!form.checkValidity()) { form.reportValidity(); return; }
+            
+            // 버튼 제어 로직 시작
+            const saveBtn = document.getElementById('btn-save-draft');
+            if (saveBtn.disabled) return;
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<i class="bi bi-hourglass-split animate-spin"></i> 저장 중...';
+            
             showLoading('저장 중...');
+            
             try {
                 const docId = document.getElementById('input-doc-id').value;
                 const isNew = !docId;
@@ -430,7 +442,15 @@
                 const activeTab = document.querySelector('.nav-item.active').dataset.target;
                 loadDrafts(activeTab);
 
-            } catch (error) { console.error(error); showToast('오류 발생: ' + error.message, true); } finally { hideLoading(); }
+            } catch (error) { 
+                console.error(error); 
+                showToast('오류 발생: ' + error.message, true); 
+            } finally { 
+                hideLoading(); 
+                // 버튼 복구
+                saveBtn.disabled = false;
+                saveBtn.innerText = '저장하기';
+            }
         }
 
         async function generateDocId() {
