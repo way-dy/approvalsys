@@ -241,7 +241,7 @@
             renderPaginatedItems();
         }
 
-        // [수정] PC 버전 상태 뱃지 시인성 개선 적용
+        // [수정] PC 버전 상태 뱃지 시인성 개선 및 기안구분/지급일자 표시 적용
         function renderPaginatedItems() {
             const container = document.getElementById('draft-list-container');
             container.innerHTML = ''; 
@@ -266,22 +266,38 @@
                 card.className = `bg-white p-4 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition cursor-pointer mb-3 relative overflow-hidden group`;
                 card.onclick = () => openDetailModal(draft.docId);
                 
-                // 상태 뱃지에 md: 클래스와 테두리/그림자 추가
+                // 지급일자 뱃지 생성 (지급일이 있을 때만 보임, 진한 남색)
+                const paymentBadge = draft.paymentDate 
+                    ? `<span class="inline-flex items-center px-2 py-1 rounded text-[11px] font-bold bg-indigo-600 text-white shadow-sm mr-2 animate-pulse">
+                         <i class="bi bi-cash-stack mr-1"></i>${draft.paymentDate} 지급
+                       </span>` 
+                    : '';
+
                 card.innerHTML = `
                     <div class="absolute left-0 top-0 bottom-0 w-1 ${status.colorClass}"></div>
-                    <div class="flex justify-between items-start mb-2 pl-3">
-                        <div class="flex-1 min-w-0 pr-2"> 
-                            <span class="text-xs font-semibold text-gray-400 mb-1 block truncate">${draft.docId} | ${draft.corporation}</span>
-                            <h3 class="text-lg font-bold text-gray-800 truncate">
+                    <div class="flex flex-col md:flex-row md:items-start justify-between mb-2 pl-3 gap-2">
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2 mb-1">
+                                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-600 border border-gray-200">
+                                    ${draft.category}
+                                </span>
+                                <span class="text-xs font-semibold text-gray-400 truncate">
+                                     | ${draft.docId} | ${draft.corporation}
+                                </span>
+                            </div>
+                            <h3 class="text-lg font-bold text-gray-800 truncate leading-tight">
                                 ${isConfidential ? '<i class="bi bi-shield-lock-fill text-red-500 mr-1"></i>' : ''}
                                 ${draft.title}
                             </h3>
                         </div>
-                        <span class="px-2 py-1 md:px-3 md:py-1.5 rounded-full text-xs md:text-sm font-bold whitespace-nowrap shadow-sm border border-opacity-20 ${status.bgClass} ${status.textClass} border-current">
-                            ${status.text}
-                        </span>
+                        <div class="flex items-center justify-end shrink-0 mt-1 md:mt-0">
+                            ${paymentBadge}
+                            <span class="px-2 py-1 md:px-3 md:py-1.5 rounded-full text-xs md:text-sm font-bold whitespace-nowrap shadow-sm border border-opacity-20 ${status.bgClass} ${status.textClass} border-current">
+                                ${status.text}
+                            </span>
+                        </div>
                     </div>
-                    <div class="flex justify-between items-center text-sm text-gray-500 pl-3">
+                    <div class="flex justify-between items-center text-sm text-gray-500 pl-3 mt-2 border-t pt-2 border-dashed border-gray-100">
                         <span><i class="bi bi-person mr-1"></i>${draft.drafter}</span>
                         <span>${draft.date.substring(5)}</span>
                     </div>
@@ -566,14 +582,29 @@
             
             const refDept = draft.ref ? ` | 참조: ${draft.ref}` : '';
 
+            // [수정] 상세 화면 상단 정보 구성 (구분, 법인, 지급일자 강조)
+            const paymentInfo = draft.paymentDate 
+                ? `<div class="w-full mt-3 mb-1 p-3 bg-indigo-50 border border-indigo-200 rounded-lg text-indigo-800 font-bold flex items-center justify-center gap-2 shadow-sm">
+                     <i class="bi bi-check-circle-fill text-indigo-600 text-lg"></i> 
+                     <span>회계팀 지급 완료 : <span class="underline underline-offset-4">${draft.paymentDate}</span></span>
+                   </div>` 
+                : '';
+
             document.getElementById('detail-info').innerHTML = `
-                <span class="mr-2 badge bg-gray-100 px-2 py-1 rounded text-xs border border-gray-200">${draft.corporation}</span>
-                <span class="mr-2 badge bg-gray-100 px-2 py-1 rounded text-xs border border-gray-200">${draft.category}</span>
-                <div class="mt-2 text-xs text-gray-500 flex items-center gap-2">
+                <div class="flex flex-wrap items-center gap-2 mb-2">
+                    <span class="px-2 py-1 rounded text-xs font-bold bg-blue-50 text-blue-700 border border-blue-100">
+                        ${draft.category}
+                    </span>
+                    <span class="px-2 py-1 rounded text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">
+                        ${draft.corporation}
+                    </span>
+                </div>
+                ${paymentInfo}
+                <div class="mt-2 text-xs text-gray-500 flex items-center gap-2 w-full pt-2 border-t border-dashed">
                     <span><i class="bi bi-person"></i> ${draft.drafter}</span>
                     <span class="text-gray-300">|</span>
                     <span>${draft.date}</span>
-                    ${refDept ? `<span class="text-blue-600 font-medium">${refDept}</span>` : ''}
+                    ${refDept ? `<span class="text-blue-600 font-medium ml-auto">${refDept}</span>` : ''}
                 </div>
             `;
             document.getElementById('detail-content').innerHTML = draft.content;
@@ -980,7 +1011,7 @@
             </div>
             
             <div class="flex-1 overflow-y-auto p-4 md:p-8">
-                <div id="detail-info" class="flex flex-wrap text-sm text-gray-600 mb-6 pb-6 border-b"></div>
+                <div id="detail-info" class="flex flex-col mb-6 pb-6 border-b"></div>
 
                 <div class="flex items-center justify-center gap-2 md:gap-4 mb-6 md:mb-8 bg-gray-50 p-4 md:p-6 rounded-xl border border-gray-100 overflow-x-auto">
                     <div class="text-center shrink-0">
