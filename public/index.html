@@ -49,6 +49,10 @@
         const itemsPerPage = 10;      
         let allFetchedData = [];      
         let filteredDisplayData = []; 
+
+        // [신규] 결재 처리를 위한 상태 변수
+        let pendingDocId = null;
+        let pendingAction = null;
         
         window.addEventListener('DOMContentLoaded', () => {
             initApp();
@@ -241,7 +245,6 @@
             renderPaginatedItems();
         }
 
-        // [수정] PC 버전 상태 뱃지 시인성 개선 및 기안구분/지급일자 표시 적용
         function renderPaginatedItems() {
             const container = document.getElementById('draft-list-container');
             container.innerHTML = ''; 
@@ -266,7 +269,6 @@
                 card.className = `bg-white p-4 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition cursor-pointer mb-3 relative overflow-hidden group`;
                 card.onclick = () => openDetailModal(draft.docId);
                 
-                // 지급일자 뱃지 생성 (지급일이 있을 때만 보임, 진한 남색)
                 const paymentBadge = draft.paymentDate 
                     ? `<span class="inline-flex items-center px-2 py-1 rounded text-[11px] font-bold bg-indigo-600 text-white shadow-sm mr-2 animate-pulse">
                          <i class="bi bi-cash-stack mr-1"></i>${draft.paymentDate} 지급
@@ -377,12 +379,10 @@
             }
         }
 
-        // [수정] 중복 저장 방지 로직 추가
         async function saveDraft() {
             const form = document.getElementById('draft-form');
             if (!form.checkValidity()) { form.reportValidity(); return; }
             
-            // 버튼 제어 로직 시작
             const saveBtn = document.getElementById('btn-save-draft');
             if (saveBtn.disabled) return;
             saveBtn.disabled = true;
@@ -463,7 +463,6 @@
                 showToast('오류 발생: ' + error.message, true); 
             } finally { 
                 hideLoading(); 
-                // 버튼 복구
                 saveBtn.disabled = false;
                 saveBtn.innerText = '저장하기';
             }
@@ -481,22 +480,74 @@
             });
         }
 
-        window.processApproval = async (docId, action) => {
-            const comment = prompt(action === 'approve' ? '승인 의견 (선택)' : '반려 사유 (필수)');
-            if (comment === null) return;
-            if (action === 'reject' && !comment.trim()) { alert('반려 사유 필수'); return; }
+        // [수정] 결재 처리를 모달 호출로 변경
+        window.processApproval = (docId, action) => {
+            pendingDocId = docId;
+            pendingAction = action;
+
+            const modal = document.getElementById('modal-comment');
+            const title = document.getElementById('comment-modal-title');
+            const btn = document.getElementById('btn-submit-comment');
+            const warning = document.getElementById('comment-warning');
+
+            // UI 변경 로직 (반려 시 빨간색 강조)
+            if (action === 'reject') {
+                title.textContent = '반려 사유 입력';
+                title.classList.add('text-red-600');
+                btn.className = 'px-5 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 text-sm font-bold shadow-md';
+                btn.textContent = '반려하기';
+                warning.classList.remove('hidden'); // 필수 입력 경고 표시
+            } else {
+                title.textContent = '결재 승인 의견';
+                title.classList.remove('text-red-600');
+                btn.className = 'px-5 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-sm font-bold shadow-md';
+                btn.textContent = '승인하기';
+                warning.classList.add('hidden');
+            }
+
+            document.getElementById('input-comment-text').value = '';
+            modal.classList.remove('hidden');
+        };
+
+        // [신규] 모달 닫기 함수
+        window.closeCommentModal = () => {
+            document.getElementById('modal-comment').classList.add('hidden');
+            pendingDocId = null;
+            pendingAction = null;
+        };
+
+        // [신규] 모달에서 확인 버튼 클릭 시 실제 처리 함수
+        window.submitApprovalComment = async () => {
+            const comment = document.getElementById('input-comment-text').value.trim();
+            const docId = pendingDocId;
+            const action = pendingAction;
+
+            if (action === 'reject' && !comment) { 
+                alert('반려 사유는 필수입니다.'); 
+                return; 
+            }
+
+            // UI 잠금
+            const btn = document.getElementById('btn-submit-comment');
+            btn.disabled = true;
+            btn.innerText = '처리 중...';
+
             showLoading('처리 중...');
+            
             try {
                 const docRef = doc(db, 'drafts', docId);
                 const draft = draftCache[docId];
                 const updateData = {};
                 const status = action === 'approve' ? '결재' : '반려';
+                
                 if (draft.approver1Email === currentUser.email && !draft.approval1Status) {
                     updateData.approval1Status = status; updateData.approval1Comment = comment;
                 } else if (draft.approver2Email === currentUser.email && draft.approval1Status === '결재') {
                     updateData.approval2Status = status; updateData.approval2Comment = comment;
                     if (status === '결재') updateData.finalApprovalDate = new Date().toISOString();
-                } else throw new Error('권한 없음');
+                } else {
+                     throw new Error('권한 없음');
+                }
                 
                 await updateDoc(docRef, updateData);
 
@@ -513,9 +564,16 @@
                     }
                 }
 
-                closeModal('modal-detail'); showToast('처리 완료');
+                closeCommentModal();
+                closeModal('modal-detail'); 
+                showToast('처리 완료');
                 loadDrafts(document.querySelector('.nav-item.active').dataset.target);
-            } catch (e) { alert('오류: ' + e.message); } finally { hideLoading(); }
+            } catch (e) { 
+                alert('오류: ' + e.message); 
+            } finally { 
+                hideLoading();
+                btn.disabled = false; // 버튼 복구
+            }
         };
 
         window.triggerRemind = async (docId) => {
@@ -582,7 +640,6 @@
             
             const refDept = draft.ref ? ` | 참조: ${draft.ref}` : '';
 
-            // [수정] 상세 화면 상단 정보 구성 (구분, 법인, 지급일자 강조)
             const paymentInfo = draft.paymentDate 
                 ? `<div class="w-full mt-3 mb-1 p-3 bg-indigo-50 border border-indigo-200 rounded-lg text-indigo-800 font-bold flex items-center justify-center gap-2 shadow-sm">
                      <i class="bi bi-check-circle-fill text-indigo-600 text-lg"></i> 
@@ -639,6 +696,7 @@
             const isAppr2 = draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status;
             
             if (isAppr1 || isAppr2) {
+                // processApproval 호출 시 prompt 대신 모달 로직을 타게 됨
                 btnArea.innerHTML = `<button onclick="processApproval('${draft.docId}', 'approve')" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 mr-2 text-sm shadow-sm">승인</button><button onclick="processApproval('${draft.docId}', 'reject')" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm shadow-sm">반려</button>`;
             }
 
@@ -731,7 +789,6 @@
             return map[type] || '목록';
         }
         
-        // [수정] 1차(전결 포함)와 2차(전결 제외) 결재자 목록 분리
         function updateApproverList() { 
             const userOptions = userList.map(u => `<option value="${u.email}">${u.name} (${u.team})</option>`).join('');
             
@@ -779,6 +836,11 @@
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: #f1f1f1; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        
+        /* [신규] 모달 애니메이션 추가 */
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in-up { animation: fadeInUp 0.3s ease-out; }
+
         @media print {
             body * { visibility: hidden; }
             #modal-detail, #modal-detail * { visibility: visible; }
@@ -1042,6 +1104,33 @@
             </div>
             
             <div class="p-4 border-t bg-white flex justify-end gap-2" id="detail-actions">
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-comment" class="fixed inset-0 z-[60] hidden flex items-center justify-center">
+        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity" onclick="closeCommentModal()"></div>
+        
+        <div class="relative w-full max-w-md mx-4 bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-fade-in-up">
+            <div class="p-5 border-b bg-gray-50 flex justify-between items-center">
+                <h3 id="comment-modal-title" class="text-lg font-bold text-gray-800">결재 승인</h3>
+                <button onclick="closeCommentModal()" class="text-gray-400 hover:text-gray-600 transition-colors">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+            
+            <div class="p-5">
+                <div id="comment-desc" class="text-sm text-gray-600 mb-2">의견을 입력해주세요. (엔터키로 줄바꿈 가능)</div>
+                <textarea id="input-comment-text" class="w-full h-32 p-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none text-sm leading-relaxed" placeholder="내용을 입력하세요..."></textarea>
+                
+                <div id="comment-warning" class="hidden mt-2 text-xs text-red-500 font-bold flex items-center gap-1">
+                    <i class="bi bi-exclamation-circle"></i> 반려 시에는 사유를 반드시 입력해야 합니다.
+                </div>
+            </div>
+
+            <div class="p-4 border-t bg-gray-50 flex justify-end gap-2">
+                <button onclick="closeCommentModal()" class="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 text-sm font-medium">취소</button>
+                <button id="btn-submit-comment" onclick="submitApprovalComment()" class="px-5 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-sm font-bold shadow-md">확인</button>
             </div>
         </div>
     </div>
