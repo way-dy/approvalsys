@@ -869,11 +869,71 @@
         .animate-fade-in-up { animation: fadeInUp 0.3s ease-out; }
 
         @media print {
-            body * { visibility: hidden; }
-            #modal-detail, #modal-detail * { visibility: visible; }
-            #modal-detail { position: absolute; left: 0; top: 0; width: 100%; height: auto; margin: 0; padding: 0; background: white; box-shadow: none !important; overflow: visible !important; }
-            #modal-detail .overflow-y-auto { overflow: visible !important; height: auto !important; }
-            [data-close-modal], #detail-actions, .bg-black\/40, #loading-overlay, button { display: none !important; }
+            /* 1. HTML과 BODY의 높이 제한 해제 및 스크롤 허용 */
+            html, body {
+                width: 100%;
+                height: auto !important;
+                overflow: visible !important;
+                background: white !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+
+            /* 2. 화면의 모든 요소를 숨김 (공간 차지 안 함) */
+            body > * {
+                display: none !important;
+            }
+
+            /* 3. 상세 모달(#modal-detail)만 보이게 설정 */
+            #modal-detail {
+                display: block !important;
+                position: static !important; /* 고정 위치 해제 (중요) */
+                width: 100% !important;
+                height: auto !important;
+                inset: auto !important;
+                overflow: visible !important; /* 넘치는 내용 표시 */
+                background: white !important;
+                border: none !important;
+                box-shadow: none !important;
+                z-index: auto !important;
+            }
+
+            /* 4. 모달 내부의 카드(흰색 박스) 스타일 초기화 */
+            /* 기존의 absolute, max-h-[90vh], overflow-hidden 속성을 무력화 */
+            #modal-detail > div:not([data-close-modal]) {
+                position: static !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                height: auto !important;
+                max-height: none !important; /* 높이 제한 해제 */
+                overflow: visible !important; /* 내용 잘림 방지 */
+                margin: 0 !important;
+                padding: 0 !important;
+                box-shadow: none !important;
+                border: none !important;
+            }
+
+            /* 5. 내부 스크롤 영역 높이 제한 해제 */
+            #modal-detail .overflow-y-auto {
+                height: auto !important;
+                max-height: none !important;
+                overflow: visible !important;
+            }
+
+            /* 6. 모달 내부 텍스트 및 내용 강제 표시 */
+            #modal-detail * {
+                visibility: visible !important;
+            }
+
+            /* 7. 불필요한 UI 요소 숨김 (닫기 버튼, 하단 버튼, 배경 등) */
+            [data-close-modal],        /* 검은 배경 및 닫기 트리거 */
+            #detail-actions,           /* 승인/반려/수정/인쇄 버튼 영역 */
+            #loading-overlay,          /* 로딩 오버레이 */
+            button,                    /* 모든 버튼 */
+            .bi-x-lg,                 /* 닫기 아이콘 */
+            ::-webkit-scrollbar {      /* 스크롤바 숨김 */
+                display: none !important;
+            }
         }
     </style>
 </head>
