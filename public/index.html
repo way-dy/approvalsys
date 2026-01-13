@@ -1,89 +1,1226 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Welcome to Firebase Hosting</title>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>동영관광 결재 시스템</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, query, where, orderBy, runTransaction, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js";
 
-    <!-- update the version number as needed -->
-    <script defer src="/__/firebase/12.7.0/firebase-app-compat.js"></script>
-    <!-- include only the Firebase features as you need -->
-    <script defer src="/__/firebase/12.7.0/firebase-auth-compat.js"></script>
-    <script defer src="/__/firebase/12.7.0/firebase-database-compat.js"></script>
-    <script defer src="/__/firebase/12.7.0/firebase-firestore-compat.js"></script>
-    <script defer src="/__/firebase/12.7.0/firebase-functions-compat.js"></script>
-    <script defer src="/__/firebase/12.7.0/firebase-messaging-compat.js"></script>
-    <script defer src="/__/firebase/12.7.0/firebase-storage-compat.js"></script>
-    <script defer src="/__/firebase/12.7.0/firebase-analytics-compat.js"></script>
-    <script defer src="/__/firebase/12.7.0/firebase-remote-config-compat.js"></script>
-    <script defer src="/__/firebase/12.7.0/firebase-performance-compat.js"></script>
-    <!-- 
-      initialize the SDK after all desired features are loaded, set useEmulator to false
-      to avoid connecting the SDK to running emulators.
-    -->
-    <script defer src="/__/firebase/init.js?useEmulator=true"></script>
+        // =========================================================================
+        // [중요] 배포한 Google Apps Script 웹 앱 URL
+        // =========================================================================
+        const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwI1IWnXCGqCDdgX-DR1e-HlXfIzysEQqHnVT5tpkVWLPMxrHikktswVc1S_GgnZXc/exec"; 
+        
+        // [변경점] 이메일 발송용 Google Apps Script URL
+        const EMAIL_API_URL = "https://script.google.com/macros/s/AKfycbzNAETA0XP7rE7AEvdwm8BriRQiI07ymw1cLyrt7wAjre2t5166VgF2NH_rQ4x6-H_Y1Q/exec"; 
 
-    <style media="screen">
-      body { background: #ECEFF1; color: rgba(0,0,0,0.87); font-family: Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; }
-      #message { background: white; max-width: 360px; margin: 100px auto 16px; padding: 32px 24px; border-radius: 3px; }
-      #message h2 { color: #ffa100; font-weight: bold; font-size: 16px; margin: 0 0 8px; }
-      #message h1 { font-size: 22px; font-weight: 300; color: rgba(0,0,0,0.6); margin: 0 0 16px;}
-      #message p { line-height: 140%; margin: 16px 0 24px; font-size: 14px; }
-      #message a { display: block; text-align: center; background: #039be5; text-transform: uppercase; text-decoration: none; color: white; padding: 16px; border-radius: 4px; }
-      #message, #message a { box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24); }
-      #load { color: rgba(0,0,0,0.4); text-align: center; font-size: 13px; }
-      @media (max-width: 600px) {
-        body, #message { margin-top: 0; background: white; box-shadow: none; }
-        body { border-top: 16px solid #ffa100; }
-      }
-    </style>
-  </head>
-  <body>
-    <div id="message">
-      <h2>Welcome</h2>
-      <h1>Firebase Hosting Setup Complete</h1>
-      <p>You're seeing this because you've successfully setup Firebase Hosting. Now it's time to go build something extraordinary!</p>
-      <a target="_blank" href="https://firebase.google.com/docs/hosting/">Open Hosting Documentation</a>
-    </div>
-    <p id="load">Firebase SDK Loading&hellip;</p>
+        // Firebase 설정
+        const firebaseConfig = {
+          apiKey: "AIzaSyAI_xl2HGC33VUA2synrNa23q448-pe0qQ",
+          authDomain: "approval-8ef73.firebaseapp.com",
+          projectId: "approval-8ef73",
+          storageBucket: "approval-8ef73.firebasestorage.app",
+          messagingSenderId: "32568902630",
+          appId: "1:32568902630:web:176466a05952ea44cccc27"
+        };
 
-    <script>
-      document.addEventListener('DOMContentLoaded', function() {
-        const loadEl = document.querySelector('#load');
-        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
-        // // The Firebase SDK is initialized and available here!
-        //
-        // firebase.auth().onAuthStateChanged(user => { });
-        // firebase.database().ref('/path/to/ref').on('value', snapshot => { });
-        // firebase.firestore().doc('/foo/bar').get().then(() => { });
-        // firebase.functions().httpsCallable('yourFunction')().then(() => { });
-        // firebase.messaging().requestPermission().then(() => { });
-        // firebase.storage().ref('/path/to/ref').getDownloadURL().then(() => { });
-        // firebase.analytics(); // call to activate
-        // firebase.analytics().logEvent('tutorial_completed');
-        // firebase.performance(); // call to activate
-        //
-        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const storage = getStorage(app);
+        const provider = new GoogleAuthProvider();
 
-        try {
-          let app = firebase.app();
-          let features = [
-            'auth', 
-            'database', 
-            'firestore',
-            'functions',
-            'messaging', 
-            'storage', 
-            'analytics', 
-            'remoteConfig',
-            'performance',
-          ].filter(feature => typeof app[feature] === 'function');
-          loadEl.textContent = `Firebase SDK loaded with ${features.join(', ')}`;
-        } catch (e) {
-          console.error(e);
-          loadEl.textContent = 'Error loading the Firebase SDK, check the console.';
+        let currentUser = null;
+        let userList = [];
+        let repairMap = {};
+        let draftCache = {};
+
+        // 페이지네이션 및 검색용 전역 변수
+        let currentPage = 1;          
+        const itemsPerPage = 10;      
+        let allFetchedData = [];      
+        let filteredDisplayData = []; 
+
+        // [신규] 결재 처리를 위한 상태 변수
+        let pendingDocId = null;
+        let pendingAction = null;
+        
+        window.addEventListener('DOMContentLoaded', () => {
+            initApp();
+        });
+
+        function initApp() {
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    showLoading('사용자 정보를 불러오는 중...');
+                    await syncMetaData();
+                    
+                    const matchedUser = userList.find(u => u.email === user.email);
+                    if (matchedUser) {
+                        // [수정] approvalOnly 속성 추가
+                        currentUser = { 
+                            ...user, 
+                            name: matchedUser.name, 
+                            team: matchedUser.team || '', 
+                            role: matchedUser.role || '일반', 
+                            confidentialAccess: matchedUser.confidentialAccess,
+                            approvalOnly: matchedUser.approvalOnly || false 
+                        };
+                    } else {
+                        currentUser = { ...user, name: user.displayName, team: '', role: '미등록', confidentialAccess: false, approvalOnly: false };
+                    }
+
+                    renderUserInfo();
+                    toggleView('app-view');
+                    
+                    // [수정] 결재 전용 사용자 UI 제어 로직
+                    if (currentUser.approvalOnly) {
+                        // 1. '새 기안' 버튼 숨기기
+                        document.getElementById('btn-new-draft').classList.add('hidden');
+                        
+                        // 2. '내가 올린 기안' 사이드바 메뉴 숨기기
+                        const myDraftBtn = document.querySelector('[data-target="myDrafts"]');
+                        if(myDraftBtn) myDraftBtn.classList.add('hidden');
+
+                        // 3. 시작 화면을 '결재할 문서'로 강제 변경
+                        const toApproveBtn = document.querySelector('[data-target="toApprove"]');
+                        if(toApproveBtn) {
+                            // 클릭 이벤트를 트리거하여 탭 활성화 및 loadDrafts 실행
+                            toApproveBtn.click(); 
+                        }
+                    } else {
+                        // 일반 사용자는 기존대로 '내가 올린 기안' 표시
+                        loadDrafts('myDrafts');
+                    }
+                    
+                    if (currentUser.team === '회계팀') document.getElementById('nav-accounting').classList.remove('hidden');
+                    if (currentUser.role === '대표' || currentUser.confidentialAccess) {
+                         document.querySelectorAll('.confidential-menu').forEach(el => { el.classList.remove('hidden'); el.classList.add('flex'); });
+                    }
+                    hideLoading();
+                } else {
+                    currentUser = null;
+                    toggleView('login-view');
+                }
+            });
+
+            document.getElementById('btn-login').addEventListener('click', () => signInWithPopup(auth, provider));
+            document.getElementById('btn-logout').addEventListener('click', () => signOut(auth));
+            document.getElementById('btn-new-draft').addEventListener('click', openNewDraftModal);
+            document.getElementById('btn-refresh').addEventListener('click', () => {
+                showToast('데이터를 새로고침합니다.');
+                const activeTab = document.querySelector('.nav-item.active').dataset.target;
+                loadDrafts(activeTab);
+            });
+
+            // 검색 입력 시 실시간 필터링 이벤트
+            document.getElementById('search-input').addEventListener('keyup', (e) => {
+                runSearch(e.target.value);
+            });
+            
+            // 모바일 메뉴 토글 로직
+            const sidebar = document.getElementById('main-sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            
+            window.toggleSidebar = () => {
+                const isClosed = sidebar.classList.contains('-translate-x-full');
+                if (isClosed) {
+                    sidebar.classList.remove('-translate-x-full'); // 열기
+                    overlay.classList.remove('hidden');
+                } else {
+                    sidebar.classList.add('-translate-x-full'); // 닫기
+                    overlay.classList.add('hidden');
+                }
+            };
+
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.addEventListener('click', (e) => {
+                    document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active', 'bg-blue-50', 'text-blue-600'));
+                    e.currentTarget.classList.add('active', 'bg-blue-50', 'text-blue-600');
+                    const target = e.currentTarget.dataset.target;
+                    loadDrafts(target);
+                    
+                    if (window.innerWidth < 768) {
+                        window.toggleSidebar();
+                    }
+                });
+            });
+
+            document.querySelectorAll('[data-close-modal]').forEach(btn => {
+                btn.addEventListener('click', () => closeModal(btn.dataset.closeModal));
+            });
+            
+            document.getElementById('btn-save-draft').addEventListener('click', saveDraft);
         }
-      });
+
+        async function syncToGoogleSheet(draftData) {
+            if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes("여기에")) {
+                console.warn("Google Apps Script URL이 설정되지 않았습니다.");
+                return;
+            }
+            try {
+                await fetch(APPS_SCRIPT_URL, {
+                    method: 'POST',
+                    mode: 'no-cors', 
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(draftData)
+                });
+                console.log(`[Google Sheet Sync] ${draftData.docId} 전송 완료`);
+            } catch (error) {
+                console.error('[Google Sheet Sync] 전송 실패:', error);
+                showToast('구글 시트 연동 실패 (콘솔 확인)', true);
+            }
+        }
+
+        async function sendEmailNotification(type, draftData) {
+            if (!EMAIL_API_URL || EMAIL_API_URL.includes("여기에")) {
+                console.warn("이메일 API URL이 설정되지 않았습니다.");
+                return;
+            }
+            
+            console.log(`[Email Sending] Type: ${type}, Doc: ${draftData.docId}`);
+            
+            try {
+                await fetch(EMAIL_API_URL, {
+                    method: 'POST',
+                    mode: 'no-cors', 
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        type: type, 
+                        draft: draftData
+                    })
+                });
+                console.log('[Email Sent] 요청 완료');
+            } catch (error) {
+                console.error('[Email Failed] 전송 실패:', error);
+            }
+        }
+
+        async function syncMetaData() {
+            try {
+                const usersDoc = await getDoc(doc(db, 'meta', 'users'));
+                if (usersDoc.exists()) { 
+                    userList = usersDoc.data().list || []; 
+                    updateApproverList(); 
+                    updateRefDeptList(); 
+                }
+                const repairDoc = await getDoc(doc(db, 'meta', 'repairMap'));
+                if (repairDoc.exists()) { repairMap = repairDoc.data().map || {}; }
+            } catch (error) { console.error(error); }
+        }
+
+        function updateRefDeptList() {
+            const select = document.getElementById('input-ref');
+            if(!select) return;
+
+            const teams = [...new Set(userList.map(u => u.team).filter(t => t && t.trim() !== ''))].sort();
+
+            let html = '<option value="">선택 안함</option>';
+            teams.forEach(team => {
+                html += `<option value="${team}">${team}</option>`;
+            });
+            html += '<option value="전체">전체</option>';
+
+            select.innerHTML = html;
+        }
+
+        async function loadDrafts(listType) {
+            const listContainer = document.getElementById('draft-list-container');
+            listContainer.innerHTML = '<div class="flex justify-center p-10"><div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div></div>';
+            document.getElementById('page-title').textContent = getTitleByListType(listType);
+            document.getElementById('search-input').value = '';
+
+            try {
+                const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'));
+                const querySnapshot = await getDocs(q);
+                let drafts = [];
+                querySnapshot.forEach((doc) => { drafts.push({ id: doc.id, ...doc.data() }); });
+                
+                allFetchedData = drafts.filter(draft => filterDraft(draft, listType));
+                
+                currentPage = 1;
+                runSearch(''); 
+
+            } catch (error) {
+                console.error(error);
+                listContainer.innerHTML = `<div class="text-center p-10 text-gray-500">데이터 로드 실패<br>${error.message}</div>`;
+            }
+        }
+
+        function runSearch(keyword) {
+            const term = keyword.toLowerCase().trim();
+            if (!term) {
+                filteredDisplayData = allFetchedData;
+            } else {
+                filteredDisplayData = allFetchedData.filter(draft => {
+                    return (draft.title && draft.title.toLowerCase().includes(term)) ||
+                           (draft.drafter && draft.drafter.toLowerCase().includes(term)) ||
+                           (draft.docId && draft.docId.toLowerCase().includes(term)) ||
+                           (draft.corporation && draft.corporation.includes(term));
+                });
+            }
+            currentPage = 1;
+            renderPaginatedItems();
+        }
+
+        function renderPaginatedItems() {
+            const container = document.getElementById('draft-list-container');
+            container.innerHTML = ''; 
+
+            if (filteredDisplayData.length === 0) {
+                container.innerHTML = `<div class="text-center p-10 text-gray-400">문서가 없습니다.</div>`;
+                renderPaginationControls();
+                return;
+            }
+
+            const startIndex = (currentPage - 1) * itemsPerPage;
+            const endIndex = startIndex + itemsPerPage;
+            const pageItems = filteredDisplayData.slice(startIndex, endIndex);
+
+            pageItems.forEach(draft => {
+                draftCache[draft.docId] = draft; 
+                
+                const status = getDraftStatus(draft);
+                const isConfidential = draft.category === '대외비';
+                const card = document.createElement('div');
+                
+                card.className = `bg-white p-4 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition cursor-pointer mb-3 relative overflow-hidden group`;
+                card.onclick = () => openDetailModal(draft.docId);
+                
+                const paymentBadge = draft.paymentDate 
+                    ? `<span class="inline-flex items-center px-2 py-1 rounded text-[11px] font-bold bg-indigo-600 text-white shadow-sm mr-2 animate-pulse">
+                         <i class="bi bi-cash-stack mr-1"></i>${draft.paymentDate} 지급
+                       </span>` 
+                    : '';
+
+                card.innerHTML = `
+                    <div class="absolute left-0 top-0 bottom-0 w-1 ${status.colorClass}"></div>
+                    <div class="flex flex-col md:flex-row md:items-start justify-between mb-2 pl-3 gap-2">
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2 mb-1">
+                                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-600 border border-gray-200">
+                                    ${draft.category}
+                                </span>
+                                <span class="text-xs font-semibold text-gray-400 truncate">
+                                     | ${draft.docId} | ${draft.corporation}
+                                </span>
+                            </div>
+                            <h3 class="text-lg font-bold text-gray-800 truncate leading-tight">
+                                ${isConfidential ? '<i class="bi bi-shield-lock-fill text-red-500 mr-1"></i>' : ''}
+                                ${draft.title}
+                            </h3>
+                        </div>
+                        <div class="flex items-center justify-end shrink-0 mt-1 md:mt-0">
+                            ${paymentBadge}
+                            <span class="px-2 py-1 md:px-3 md:py-1.5 rounded-full text-xs md:text-sm font-bold whitespace-nowrap shadow-sm border border-opacity-20 ${status.bgClass} ${status.textClass} border-current">
+                                ${status.text}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="flex justify-between items-center text-sm text-gray-500 pl-3 mt-2 border-t pt-2 border-dashed border-gray-100">
+                        <span><i class="bi bi-person mr-1"></i>${draft.drafter}</span>
+                        <span>${draft.date.substring(5)}</span>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+
+            renderPaginationControls();
+        }
+
+        function renderPaginationControls() {
+            const container = document.getElementById('pagination-container');
+            container.innerHTML = '';
+            
+            const totalCount = filteredDisplayData.length;
+            if (totalCount === 0) return;
+
+            const totalPages = Math.ceil(totalCount / itemsPerPage);
+            
+            const prevBtn = document.createElement('button');
+            prevBtn.className = `w-8 h-8 rounded-full flex items-center justify-center text-sm ${currentPage === 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`;
+            prevBtn.innerHTML = '<i class="bi bi-chevron-left"></i>';
+            prevBtn.disabled = currentPage === 1;
+            prevBtn.onclick = () => { if(currentPage > 1) { currentPage--; renderPaginatedItems(); container.scrollIntoView({block: "end"}); }};
+            container.appendChild(prevBtn);
+
+            let startPage = Math.max(1, currentPage - 2);
+            let endPage = Math.min(totalPages, startPage + 4);
+            
+            if (endPage - startPage < 4) {
+                startPage = Math.max(1, endPage - 4);
+            }
+
+            for (let i = startPage; i <= endPage; i++) {
+                const btn = document.createElement('button');
+                const isActive = i === currentPage;
+                btn.className = `w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition ${isActive ? 'bg-blue-600 text-white shadow-md' : 'text-gray-600 hover:bg-gray-100'}`;
+                btn.textContent = i;
+                btn.onclick = () => { currentPage = i; renderPaginatedItems(); }; 
+                container.appendChild(btn);
+            }
+
+            const nextBtn = document.createElement('button');
+            nextBtn.className = `w-8 h-8 rounded-full flex items-center justify-center text-sm ${currentPage === totalPages ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`;
+            nextBtn.innerHTML = '<i class="bi bi-chevron-right"></i>';
+            nextBtn.disabled = currentPage === totalPages;
+            nextBtn.onclick = () => { if(currentPage < totalPages) { currentPage++; renderPaginatedItems(); }};
+            container.appendChild(nextBtn);
+            
+            const countSpan = document.createElement('span');
+            countSpan.className = "ml-4 text-xs text-gray-400 absolute right-4 hidden md:block";
+            countSpan.textContent = `총 ${totalCount}건`;
+            container.appendChild(countSpan);
+        }
+
+        function filterDraft(draft, listType) {
+            const isConfidential = draft.category === '대외비';
+            const canViewConfidential = currentUser.role === '대표' || currentUser.confidentialAccess;
+            
+            const isAccountingTarget = (currentUser.team === '회계팀') && 
+                                       (!isConfidential || canViewConfidential) &&
+                                       ['경비', '직영수리비'].includes(draft.category) &&
+                                       draft.approval2Status === '결재' &&
+                                       !draft.paymentDate;
+
+            switch (listType) {
+                case 'myDrafts': return draft.drafterEmail === currentUser.email;
+                case 'toApprove': return !isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
+                case 'toApproveConfidential': if (!canViewConfidential) return false; return isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
+                case 'allDrafts': return !isConfidential;
+                case 'allConfidentialDrafts': return canViewConfidential && isConfidential;
+                case 'acc-paju': return isAccountingTarget && draft.corporation === '동영(파주)';
+                case 'acc-yongin': return isAccountingTarget && draft.corporation === '동영(용인)';
+                case 'acc-seoul': return isAccountingTarget && draft.corporation === '동영(서울)';
+                case 'acc-tour': return isAccountingTarget === true && draft.corporation === '동영투어';
+                default: return false;
+            }
+        }
+
+        async function saveDraft() {
+            const form = document.getElementById('draft-form');
+            if (!form.checkValidity()) { form.reportValidity(); return; }
+            
+            const saveBtn = document.getElementById('btn-save-draft');
+            if (saveBtn.disabled) return;
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<i class="bi bi-hourglass-split animate-spin"></i> 저장 중...';
+            
+            showLoading('저장 중...');
+            
+            try {
+                const docId = document.getElementById('input-doc-id').value;
+                const isNew = !docId;
+                const fileInput = document.getElementById('input-attachments');
+                let attachments = isNew ? [] : (draftCache[docId]?.attachments || []);
+                
+                if (fileInput.files.length > 0) {
+                    for (const file of fileInput.files) {
+                        const storageRef = ref(storage, `attachments/${Date.now()}_${file.name}`);
+                        const snapshot = await uploadBytes(storageRef, file);
+                        const url = await getDownloadURL(snapshot.ref);
+                        attachments.push({ name: file.name, url: url });
+                    }
+                }
+                
+                let newDocId = docId;
+                if (isNew) newDocId = await generateDocId();
+                
+                const approver1Input = document.getElementById('input-approver1').value;
+                const isJeonGyeol = approver1Input === '전결'; 
+
+                const app1Email = isJeonGyeol ? 'jeongyeol' : approver1Input;
+                const app1Name  = isJeonGyeol ? '전결' : getUserNameByEmail(approver1Input);
+                
+                const app1Status = isJeonGyeol ? '결재' : (isNew ? null : (draftCache[newDocId].approval1Status || null));
+                const app1Comment = isJeonGyeol ? '전결 처리' : (isNew ? null : (draftCache[newDocId].approval1Comment || null));
+
+                const draftData = {
+                    docId: newDocId,
+                    category: document.getElementById('input-category').value,
+                    corporation: document.getElementById('input-corporation').value,
+                    title: document.getElementById('input-title').value,
+                    content: document.getElementById('input-content').innerHTML,
+                    ref: document.getElementById('input-ref').value,
+                    refLinks: getRefLinksFromDOM(),
+                    
+                    approver1Email: app1Email,
+                    approver1Name: app1Name,
+                    approval1Status: app1Status, 
+                    approval1Comment: app1Comment,
+
+                    approver2Email: document.getElementById('input-approver2').value,
+                    approver2Name: getUserNameByEmail(document.getElementById('input-approver2').value),
+                    attachments: attachments,
+                    drafter: isNew ? currentUser.name : (draftCache[newDocId].drafter),
+                    drafterEmail: isNew ? currentUser.email : (draftCache[newDocId].drafterEmail),
+                    createdAt: isNew ? serverTimestamp() : (draftCache[newDocId].createdAt),
+                    date: isNew ? new Date().toISOString().split('T')[0] : (draftCache[newDocId].date),
+                    
+                    approval2Status: isNew ? null : (draftCache[newDocId].approval2Status || null),
+                    paymentDate: isNew ? null : (draftCache[newDocId].paymentDate || null)
+                };
+                
+                if (isNew) await setDoc(doc(db, "drafts", newDocId), draftData);
+                else await updateDoc(doc(db, "drafts", newDocId), draftData);
+                
+                syncToGoogleSheet(draftData);
+
+                if (isNew) {
+                    sendEmailNotification('NEW', draftData);
+                }
+
+                closeModal('modal-draft'); 
+                showToast(isNew ? (isJeonGyeol ? '등록 완료 (1차 전결)' : '등록 완료') : '수정 완료');
+                
+                const activeTab = document.querySelector('.nav-item.active').dataset.target;
+                loadDrafts(activeTab);
+
+            } catch (error) { 
+                console.error(error); 
+                showToast('오류 발생: ' + error.message, true); 
+            } finally { 
+                hideLoading(); 
+                saveBtn.disabled = false;
+                saveBtn.innerText = '저장하기';
+            }
+        }
+
+        async function generateDocId() {
+            const counterRef = doc(db, 'meta', 'counters');
+            const year = new Date().getFullYear().toString();
+            return await runTransaction(db, async (transaction) => {
+                const counterDoc = await transaction.get(counterRef);
+                let newCount = 1;
+                if (counterDoc.exists() && counterDoc.data().year === year) newCount = counterDoc.data().count + 1;
+                transaction.set(counterRef, { year: year, count: newCount });
+                return `${year}-${String(newCount).padStart(4, '0')}`;
+            });
+        }
+
+        // [수정] 결재 처리를 모달 호출로 변경
+        window.processApproval = (docId, action) => {
+            pendingDocId = docId;
+            pendingAction = action;
+
+            const modal = document.getElementById('modal-comment');
+            const title = document.getElementById('comment-modal-title');
+            const btn = document.getElementById('btn-submit-comment');
+            const warning = document.getElementById('comment-warning');
+
+            // UI 변경 로직 (반려 시 빨간색 강조)
+            if (action === 'reject') {
+                title.textContent = '반려 사유 입력';
+                title.classList.add('text-red-600');
+                btn.className = 'px-5 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 text-sm font-bold shadow-md';
+                btn.textContent = '반려하기';
+                warning.classList.remove('hidden'); // 필수 입력 경고 표시
+            } else {
+                title.textContent = '결재 승인 의견';
+                title.classList.remove('text-red-600');
+                btn.className = 'px-5 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-sm font-bold shadow-md';
+                btn.textContent = '승인하기';
+                warning.classList.add('hidden');
+            }
+
+            document.getElementById('input-comment-text').value = '';
+            modal.classList.remove('hidden');
+        };
+
+        // [신규] 모달 닫기 함수
+        window.closeCommentModal = () => {
+            document.getElementById('modal-comment').classList.add('hidden');
+            pendingDocId = null;
+            pendingAction = null;
+        };
+
+        // [신규] 모달에서 확인 버튼 클릭 시 실제 처리 함수
+        window.submitApprovalComment = async () => {
+            const comment = document.getElementById('input-comment-text').value.trim();
+            const docId = pendingDocId;
+            const action = pendingAction;
+
+            if (action === 'reject' && !comment) { 
+                alert('반려 사유는 필수입니다.'); 
+                return; 
+            }
+
+            // UI 잠금
+            const btn = document.getElementById('btn-submit-comment');
+            btn.disabled = true;
+            btn.innerText = '처리 중...';
+
+            showLoading('처리 중...');
+            
+            try {
+                const docRef = doc(db, 'drafts', docId);
+                const draft = draftCache[docId];
+                const updateData = {};
+                const status = action === 'approve' ? '결재' : '반려';
+                
+                if (draft.approver1Email === currentUser.email && !draft.approval1Status) {
+                    updateData.approval1Status = status; updateData.approval1Comment = comment;
+                } else if (draft.approver2Email === currentUser.email && draft.approval1Status === '결재') {
+                    updateData.approval2Status = status; updateData.approval2Comment = comment;
+                    if (status === '결재') updateData.finalApprovalDate = new Date().toISOString();
+                } else {
+                     throw new Error('권한 없음');
+                }
+                
+                await updateDoc(docRef, updateData);
+
+                const fullSyncedData = { ...draft, ...updateData };
+                syncToGoogleSheet(fullSyncedData);
+
+                if (status === '반려') {
+                    sendEmailNotification('REJECT', fullSyncedData);
+                } else if (status === '결재') {
+                    if (draft.approver2Email === currentUser.email) {
+                        sendEmailNotification('APPROVED', fullSyncedData);
+                    } else if (draft.approver1Email === currentUser.email) {
+                        sendEmailNotification('REMIND', fullSyncedData); 
+                    }
+                }
+
+                closeCommentModal();
+                closeModal('modal-detail'); 
+                showToast('처리 완료');
+                loadDrafts(document.querySelector('.nav-item.active').dataset.target);
+            } catch (e) { 
+                alert('오류: ' + e.message); 
+            } finally { 
+                hideLoading();
+                btn.disabled = false; // 버튼 복구
+            }
+        };
+
+        window.triggerRemind = async (docId) => {
+            if(!confirm('현재 결재 대기자에게 독촉 이메일을 발송하시겠습니까?')) return;
+            const draft = draftCache[docId];
+            showToast('독촉 메일 발송 요청 중...');
+            await sendEmailNotification('REMIND', draft);
+            showToast('발송 요청 완료');
+        };
+
+        window.savePaymentDate = async (docId) => {
+            const dateVal = document.getElementById('detail-payment-date-input').value;
+            if(!dateVal) return alert('날짜 선택');
+            try { 
+                await updateDoc(doc(db, 'drafts', docId), { paymentDate: dateVal }); 
+                const draft = draftCache[docId];
+                const fullSyncedData = { ...draft, paymentDate: dateVal };
+                syncToGoogleSheet(fullSyncedData);
+                alert('저장 완료'); 
+                closeModal('modal-detail'); 
+                loadDrafts(document.querySelector('.nav-item.active').dataset.target); 
+            } catch(e) { alert(e.message); }
+        }
+
+        function renderUserInfo() {
+            document.getElementById('user-profile-name').textContent = `${currentUser.name} (${currentUser.role})`;
+            document.getElementById('user-profile-email').textContent = currentUser.email;
+        }
+
+        function toggleView(viewId) {
+            document.getElementById('login-view').classList.add('hidden');
+            document.getElementById('app-view').classList.add('hidden');
+            document.getElementById(viewId).classList.remove('hidden');
+        }
+
+        function getDraftStatus(draft) {
+            if (draft.approval1Status === '반려' || draft.approval2Status === '반려') return { text: '반려', bgClass: 'bg-red-100', textClass: 'text-red-600', colorClass: 'bg-red-500' };
+            if (draft.approval2Status === '결재') return { text: '완료', bgClass: 'bg-green-100', textClass: 'text-green-600', colorClass: 'bg-green-500' };
+            if (draft.approval1Status === '결재') return { text: '1차승인', bgClass: 'bg-blue-100', textClass: 'text-blue-600', colorClass: 'bg-blue-500' };
+            return { text: '대기', bgClass: 'bg-yellow-100', textClass: 'text-yellow-600', colorClass: 'bg-yellow-400' };
+        }
+
+        function openNewDraftModal() {
+            document.getElementById('draft-form').reset();
+            document.getElementById('input-doc-id').value = '';
+            document.getElementById('input-content').innerHTML = '';
+            document.getElementById('draft-modal-title').textContent = '새 기안 작성';
+            
+            document.getElementById('ref-links-wrapper').innerHTML = `
+                <div class="flex gap-2 mb-2 ref-link-row items-center">
+                    <input type="text" placeholder="링크 제목" class="w-1/3 rounded-lg border-gray-300 border p-2.5 text-sm focus:outline-none focus:border-blue-500">
+                    <input type="text" placeholder="URL (https://...)" class="flex-1 rounded-lg border-gray-300 border p-2.5 text-sm focus:outline-none focus:border-blue-500">
+                    <button type="button" onclick="this.parentElement.remove()" class="text-red-500 hover:bg-red-50 p-2 rounded transition"><i class="bi bi-trash"></i></button>
+                </div>`;
+            document.getElementById('modal-draft').classList.remove('hidden');
+        }
+
+        window.openDetailModal = (docId) => {
+            const draft = draftCache[docId];
+            if (!draft) return;
+            const modal = document.getElementById('modal-detail');
+            document.getElementById('detail-doc-id').textContent = draft.docId;
+            document.getElementById('detail-title').textContent = draft.title;
+            
+            const refDept = draft.ref ? ` | 참조: ${draft.ref}` : '';
+
+            const paymentInfo = draft.paymentDate 
+                ? `<div class="w-full mt-3 mb-1 p-3 bg-indigo-50 border border-indigo-200 rounded-lg text-indigo-800 font-bold flex items-center justify-center gap-2 shadow-sm">
+                     <i class="bi bi-check-circle-fill text-indigo-600 text-lg"></i> 
+                     <span>회계팀 지급 완료 : <span class="underline underline-offset-4">${draft.paymentDate}</span></span>
+                   </div>` 
+                : '';
+
+            document.getElementById('detail-info').innerHTML = `
+                <div class="flex flex-wrap items-center gap-2 mb-2">
+                    <span class="px-2 py-1 rounded text-xs font-bold bg-blue-50 text-blue-700 border border-blue-100">
+                        ${draft.category}
+                    </span>
+                    <span class="px-2 py-1 rounded text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">
+                        ${draft.corporation}
+                    </span>
+                </div>
+                ${paymentInfo}
+                <div class="mt-2 text-xs text-gray-500 flex items-center gap-2 w-full pt-2 border-t border-dashed">
+                    <span><i class="bi bi-person"></i> ${draft.drafter}</span>
+                    <span class="text-gray-300">|</span>
+                    <span>${draft.date}</span>
+                    ${refDept ? `<span class="text-blue-600 font-medium ml-auto">${refDept}</span>` : ''}
+                </div>
+            `;
+            document.getElementById('detail-content').innerHTML = draft.content;
+            
+            const linksContainer = document.getElementById('detail-links');
+            linksContainer.innerHTML = '';
+            
+            if (draft.refLinks) {
+                draft.refLinks.forEach(link => {
+                    const url = link.url || link; 
+                    const title = link.title || url;
+                    
+                    linksContainer.innerHTML += `
+                        <a href="${url}" target="_blank" class="flex items-center gap-2 bg-blue-50 hover:bg-blue-100 border border-blue-100 text-blue-700 px-3 py-2 rounded-lg mb-2 transition group">
+                            <i class="bi bi-link-45deg text-lg group-hover:scale-110 transition-transform"></i>
+                            <span class="text-sm font-medium truncate">${title}</span>
+                            <i class="bi bi-box-arrow-up-right text-xs ml-auto opacity-50"></i>
+                        </a>`;
+                });
+            }
+
+            const filesContainer = document.getElementById('detail-files');
+            filesContainer.innerHTML = '';
+            if (draft.attachments) draft.attachments.forEach(file => filesContainer.innerHTML += `<a href="${file.url}" target="_blank" class="inline-flex items-center px-3 py-1 rounded-full border border-gray-300 bg-gray-50 text-xs text-gray-700 hover:bg-gray-100 mr-2 mb-2"><i class="bi bi-paperclip mr-1"></i> ${file.name}</a>`);
+
+            renderApprovalStatus('detail-appr1', draft.approver1Name, draft.approval1Status, draft.approval1Comment);
+            renderApprovalStatus('detail-appr2', draft.approver2Name, draft.approval2Status, draft.approval2Comment);
+
+            const btnArea = document.getElementById('detail-actions');
+            btnArea.innerHTML = '';
+            const isAppr1 = draft.approver1Email === currentUser.email && !draft.approval1Status;
+            const isAppr2 = draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status;
+            
+            if (isAppr1 || isAppr2) {
+                // processApproval 호출 시 prompt 대신 모달 로직을 타게 됨
+                btnArea.innerHTML = `<button onclick="processApproval('${draft.docId}', 'approve')" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 mr-2 text-sm shadow-sm">승인</button><button onclick="processApproval('${draft.docId}', 'reject')" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm shadow-sm">반려</button>`;
+            }
+
+            // [수정] approvalOnly가 true인 경우 수정 버튼 숨김
+            if (draft.drafterEmail === currentUser.email && !draft.approval1Status && !currentUser.approvalOnly) {
+                btnArea.innerHTML += `<button onclick="editDraft('${draft.docId}')" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 mr-2 text-sm flex items-center gap-1 shadow-sm"><i class="bi bi-pencil"></i> 수정</button>`;
+            }
+
+            if (draft.drafterEmail === currentUser.email && !draft.paymentDate && draft.approval2Status !== '결재' && draft.approval1Status !== '반려' && draft.approval2Status !== '반려') {
+                btnArea.innerHTML += `<button onclick="triggerRemind('${draft.docId}')" class="bg-orange-500 text-white px-4 py-2 rounded hover:bg-orange-600 ml-2 text-sm flex items-center gap-1 shadow-sm"><i class="bi bi-bell"></i> 독촉</button>`;
+            }
+
+            // [수정] 결재 완료 조건문(if) 제거 -> 항상 인쇄 버튼 표시
+            btnArea.innerHTML += `<button onclick="window.print()" class="bg-gray-700 text-white px-4 py-2 rounded hover:bg-gray-800 ml-2 text-sm flex items-center gap-1 shadow-sm"><i class="bi bi-printer"></i> 인쇄</button>`;
+
+            const paymentArea = document.getElementById('detail-payment-area');
+            paymentArea.classList.add('hidden');
+            if (currentUser.team === '회계팀' && ['경비', '직영수리비'].includes(draft.category) && draft.approval2Status === '결재' && !draft.paymentDate) {
+                paymentArea.classList.remove('hidden');
+                let infoMsg = draft.category === '직영수리비' ? (repairMap[draft.docId] ? `<div class="text-blue-600 text-xs font-bold mb-2">수리비: ${repairMap[draft.docId]}</div>` : `<div class="text-red-500 text-xs font-bold mb-2">수리비 없음</div>`) : '';
+                document.getElementById('repair-cost-display').innerHTML = infoMsg;
+            }
+            modal.classList.remove('hidden');
+        }
+
+        window.editDraft = (docId) => {
+            const draft = draftCache[docId];
+            if (!draft) return;
+            closeModal('modal-detail');
+            openNewDraftModal();
+            document.getElementById('draft-modal-title').textContent = '기안 수정';
+            document.getElementById('input-doc-id').value = draft.docId;
+            document.getElementById('input-category').value = draft.category;
+            document.getElementById('input-corporation').value = draft.corporation;
+            document.getElementById('input-title').value = draft.title;
+            document.getElementById('input-content').innerHTML = draft.content;
+            document.getElementById('input-ref').value = draft.ref || '';
+            document.getElementById('input-approver1').value = draft.approver1Email;
+            document.getElementById('input-approver2').value = draft.approver2Email;
+            
+            const linkWrapper = document.getElementById('ref-links-wrapper');
+            linkWrapper.innerHTML = '';
+            
+            if (draft.refLinks && draft.refLinks.length > 0) {
+                draft.refLinks.forEach(link => {
+                     const titleVal = link.title || '';
+                     const urlVal = link.url || link;
+                     
+                     linkWrapper.insertAdjacentHTML('beforeend', `
+                        <div class="flex gap-2 mb-2 ref-link-row items-center">
+                            <input type="text" value="${titleVal}" placeholder="링크 제목" class="w-1/3 rounded-lg border-gray-300 border p-2.5 text-sm">
+                            <input type="text" value="${urlVal}" placeholder="URL" class="flex-1 rounded-lg border-gray-300 border p-2.5 text-sm">
+                            <button type="button" onclick="this.parentElement.remove()" class="text-red-500 hover:bg-red-50 p-2 rounded transition"><i class="bi bi-trash"></i></button>
+                        </div>`);
+                });
+            } else {
+                 addRefLinkInput();
+            }
+            showToast('내용을 수정 후 저장하세요.');
+        };
+
+        function renderApprovalStatus(elId, name, status, comment) {
+            const container = document.getElementById(elId);
+            let badge = '<span class="px-2 py-0.5 bg-gray-200 text-gray-600 rounded text-xs">대기</span>';
+            if (status === '결재') badge = '<span class="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">승인</span>';
+            if (status === '반려') badge = '<span class="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs">반려</span>';
+            container.innerHTML = `<div class="font-bold text-sm">${name}</div><div class="mb-1">${badge}</div>${comment ? `<div class="text-xs text-gray-500 bg-gray-50 p-2 rounded">"${comment}"</div>` : ''}`;
+        }
+
+        function closeModal(modalId) { document.getElementById(modalId).classList.add('hidden'); }
+        function showLoading(msg) { document.querySelector('#loading-overlay p').textContent = msg; document.getElementById('loading-overlay').classList.remove('hidden'); }
+        function hideLoading() { document.getElementById('loading-overlay').classList.add('hidden'); }
+        function showToast(msg, isError = false) {
+            const toast = document.createElement('div');
+            toast.className = `fixed bottom-5 right-5 px-6 py-3 rounded-lg shadow-lg text-white text-sm ${isError ? 'bg-red-500' : 'bg-gray-800'} animate-bounce z-50`;
+            toast.textContent = msg; document.body.appendChild(toast); setTimeout(() => toast.remove(), 3000);
+        }
+        function getTitleByListType(type) {
+            const map = { 
+                'myDrafts': '내가 올린 기안', 
+                'toApprove': '결재할 문서', 
+                'toApproveConfidential': '결재(대외비)', 
+                'allDrafts': '전체 기안', 
+                'allConfidentialDrafts': '전체(대외비)',
+                'acc-paju': '지급 처리 - 동영(파주)',
+                'acc-yongin': '지급 처리 - 동영(용인)',
+                'acc-seoul': '지급 처리 - 동영(서울)',
+                'acc-tour': '지급 처리 - 동영투어'
+            };
+            return map[type] || '목록';
+        }
+        
+        function updateApproverList() { 
+            const userOptions = userList.map(u => `<option value="${u.email}">${u.name} (${u.team})</option>`).join('');
+            
+            // 1차 결재자 리스트 (전결 포함)
+            const list1 = document.getElementById('approvers-datalist');
+            if (list1) list1.innerHTML = `<option value="전결">1차 전결 (바로 2차 결재로 이동)</option>` + userOptions; 
+            
+            // 2차 결재자 리스트 (전결 제외)
+            const list2 = document.getElementById('approvers-datalist-2');
+            if (list2) list2.innerHTML = userOptions;
+        }
+
+        function getUserNameByEmail(email) { 
+            if(email === '전결') return '전결';
+            const u = userList.find(user => user.email === email); 
+            return u ? u.name : email.split('@')[0]; 
+        }
+
+        window.addRefLinkInput = () => { 
+            document.getElementById('ref-links-wrapper').insertAdjacentHTML('beforeend', `
+            <div class="flex gap-2 mb-2 ref-link-row items-center">
+                <input type="text" placeholder="링크 제목" class="w-1/3 rounded-lg border-gray-300 border p-2.5 text-sm focus:outline-none focus:border-blue-500">
+                <input type="text" placeholder="URL" class="flex-1 rounded-lg border-gray-300 border p-2.5 text-sm focus:outline-none focus:border-blue-500">
+                <button type="button" onclick="this.parentElement.remove()" class="text-red-500 hover:bg-red-50 p-2 rounded transition"><i class="bi bi-trash"></i></button>
+            </div>`); 
+        }
+        
+        function getRefLinksFromDOM() { 
+            const links = []; 
+            document.querySelectorAll('.ref-link-row').forEach(row => { 
+                const inputs = row.querySelectorAll('input');
+                const title = inputs[0].value.trim();
+                const url = inputs[1].value.trim();
+                if(url) { 
+                    links.push({ title: title || url, url: url }); 
+                } 
+            }); 
+            return links; 
+        }
+
     </script>
-  </body>
+
+    <style>
+        body { font-family: 'Noto Sans KR', sans-serif; background-color: #F3F4F6; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        
+        /* [신규] 모달 애니메이션 추가 */
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in-up { animation: fadeInUp 0.3s ease-out; }
+
+        @media print {
+            /* 1. HTML과 BODY의 높이 제한 해제 및 스크롤 허용 */
+            html, body {
+                width: 100%;
+                height: auto !important;
+                overflow: visible !important;
+                background: white !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+
+            /* 2. 화면의 모든 요소를 숨김 (공간 차지 안 함) */
+            body > * {
+                display: none !important;
+            }
+
+            /* 3. 상세 모달(#modal-detail)만 보이게 설정 */
+            #modal-detail {
+                display: block !important;
+                position: static !important; /* 고정 위치 해제 (중요) */
+                width: 100% !important;
+                height: auto !important;
+                inset: auto !important;
+                overflow: visible !important; /* 넘치는 내용 표시 */
+                background: white !important;
+                border: none !important;
+                box-shadow: none !important;
+                z-index: auto !important;
+            }
+
+            /* 4. 모달 내부의 카드(흰색 박스) 스타일 초기화 */
+            /* 기존의 absolute, max-h-[90vh], overflow-hidden 속성을 무력화 */
+            #modal-detail > div:not([data-close-modal]) {
+                position: static !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                height: auto !important;
+                max-height: none !important; /* 높이 제한 해제 */
+                overflow: visible !important; /* 내용 잘림 방지 */
+                margin: 0 !important;
+                padding: 0 !important;
+                box-shadow: none !important;
+                border: none !important;
+            }
+
+            /* 5. 내부 스크롤 영역 높이 제한 해제 */
+            #modal-detail .overflow-y-auto {
+                height: auto !important;
+                max-height: none !important;
+                overflow: visible !important;
+            }
+
+            /* 6. 모달 내부 텍스트 및 내용 강제 표시 */
+            #modal-detail * {
+                visibility: visible !important;
+            }
+
+            /* 7. 불필요한 UI 요소 숨김 (닫기 버튼, 하단 버튼, 배경 등) */
+            [data-close-modal],        /* 검은 배경 및 닫기 트리거 */
+            #detail-actions,           /* 승인/반려/수정/인쇄 버튼 영역 */
+            #loading-overlay,          /* 로딩 오버레이 */
+            button,                    /* 모든 버튼 */
+            .bi-x-lg,                 /* 닫기 아이콘 */
+            ::-webkit-scrollbar {      /* 스크롤바 숨김 */
+                display: none !important;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loading-overlay" class="fixed inset-0 bg-white/90 z-50 flex flex-col justify-center items-center backdrop-blur-sm hidden">
+        <div class="animate-spin rounded-full h-10 w-10 border-b-4 border-blue-600 mb-4"></div>
+        <p class="text-gray-600 font-medium text-sm">로딩중...</p>
+    </div>
+
+    <div id="login-view" class="h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 hidden">
+        <div class="bg-white p-8 rounded-2xl shadow-2xl text-center max-w-sm w-full border border-white/50 mx-4">
+            <div class="mb-8">
+                <div class="bg-blue-600 w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-500/30">
+                    <i class="bi bi-journal-check text-2xl text-white"></i>
+                </div>
+                <h1 class="text-xl font-bold text-gray-800 mb-2">기안서 결재 시스템</h1>
+                <p class="text-gray-500 text-sm">Google 계정으로 로그인하세요.</p>
+            </div>
+            <button id="btn-login" class="w-full bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-medium py-3 px-4 rounded-xl shadow-sm transition flex items-center justify-center gap-3 text-sm">
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-5 h-5">
+                Google 로그인
+            </button>
+        </div>
+    </div>
+
+    <div id="app-view" class="hidden flex h-screen overflow-hidden relative">
+        
+        <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden md:hidden" onclick="toggleSidebar()"></div>
+
+        <aside id="main-sidebar" class="fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-gray-200 flex flex-col shadow-lg transform -translate-x-full transition-transform duration-300 md:translate-x-0 md:static md:flex md:shadow-none">
+            <div class="p-6 border-b border-gray-100 flex justify-between items-center">
+                <div class="flex items-center gap-3 text-blue-700 font-bold text-xl">
+                    <i class="bi bi-journal-bookmark-fill"></i> 동영 기안서시스템
+                </div>
+                <button class="md:hidden text-gray-400" onclick="toggleSidebar()"><i class="bi bi-x-lg"></i></button>
+            </div>
+            
+            <nav class="flex-1 overflow-y-auto p-4 space-y-1">
+                <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-2 px-2">내 업무</div>
+                <button class="nav-item w-full text-left px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-50 transition flex items-center gap-3 active bg-blue-50 text-blue-600" data-target="myDrafts">
+                    <i class="bi bi-person"></i> 내가 올린 기안
+                </button>
+                <button class="nav-item w-full text-left px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-50 transition flex items-center gap-3" data-target="toApprove">
+                    <i class="bi bi-check-circle"></i> 결재할 문서
+                </button>
+                <button class="nav-item confidential-menu hidden w-full text-left px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-50 transition flex items-center gap-3" data-target="toApproveConfidential">
+                    <i class="bi bi-shield-lock"></i> 결재할 문서 (대외비)
+                </button>
+
+                <div class="border-t my-4"></div>
+
+                <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 px-2">전체 현황</div>
+                <button class="nav-item w-full text-left px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-50 transition flex items-center gap-3" data-target="allDrafts">
+                    <i class="bi bi-folder"></i> 전체 기안
+                </button>
+                <button class="nav-item confidential-menu hidden w-full text-left px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-50 transition flex items-center gap-3" data-target="allConfidentialDrafts">
+                    <i class="bi bi-shield-lock-fill"></i> 전체 기안 (대외비)
+                </button>
+
+                <div id="nav-accounting" class="hidden">
+                    <div class="border-t my-4"></div>
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 px-2">회계팀 지급 처리</div>
+                    <button class="nav-item w-full text-left px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-50 transition flex items-center gap-3 text-sm" data-target="acc-paju">
+                        <i class="bi bi-building"></i> 동영(파주)
+                    </button>
+                    <button class="nav-item w-full text-left px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-50 transition flex items-center gap-3 text-sm" data-target="acc-yongin">
+                        <i class="bi bi-building"></i> 동영(용인)
+                    </button>
+                    <button class="nav-item w-full text-left px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-50 transition flex items-center gap-3 text-sm" data-target="acc-seoul">
+                        <i class="bi bi-building"></i> 동영(서울)
+                    </button>
+                    <button class="nav-item w-full text-left px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-50 transition flex items-center gap-3 text-sm" data-target="acc-tour">
+                        <i class="bi bi-airplane"></i> 동영투어
+                    </button>
+                </div>
+            </nav>
+
+            <div class="p-4 border-t border-gray-100 bg-gray-50">
+                <div class="flex items-center gap-3 mb-3">
+                    <div class="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold">
+                        <i class="bi bi-person-fill"></i>
+                    </div>
+                    <div class="overflow-hidden">
+                        <div id="user-profile-name" class="font-bold text-sm text-gray-800 truncate">사용자</div>
+                        <div id="user-profile-email" class="text-xs text-gray-500 truncate">user@email.com</div>
+                    </div>
+                </div>
+                <button id="btn-logout" class="w-full text-xs text-center text-gray-500 hover:text-red-500 py-1">로그아웃</button>
+            </div>
+        </aside>
+
+        <main class="flex-1 flex flex-col min-w-0 bg-gray-50/50 w-full transition-all duration-300">
+            <header class="bg-white border-b border-gray-200 h-16 flex items-center justify-between px-4 md:px-8 shadow-sm">
+                <div class="flex items-center gap-3">
+                    <button class="md:hidden text-gray-600 text-2xl" onclick="toggleSidebar()">
+                        <i class="bi bi-list"></i>
+                    </button>
+                    <h2 id="page-title" class="text-lg md:text-xl font-bold text-gray-800 truncate">내가 올린 기안</h2>
+                </div>
+                
+                <div class="flex gap-2">
+                    <button id="btn-refresh" class="w-9 h-9 md:w-10 md:h-10 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-blue-600 transition flex items-center justify-center">
+                        <i class="bi bi-arrow-clockwise text-lg"></i>
+                    </button>
+                    <button id="btn-new-draft" class="bg-blue-600 hover:bg-blue-700 text-white px-3 md:px-5 py-2 rounded-full font-medium shadow-md shadow-blue-500/20 transition flex items-center gap-2">
+                        <i class="bi bi-pencil-square"></i> <span class="hidden md:inline">새 기안</span>
+                    </button>
+                </div>
+            </header>
+
+            <div class="px-4 md:px-8 pt-4 pb-2">
+                <div class="relative">
+                    <input type="text" id="search-input" placeholder="제목, 기안자, 문서번호 검색..." 
+                        class="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors bg-white shadow-sm text-sm">
+                    <i class="bi bi-search absolute left-3.5 top-2.5 text-gray-400"></i>
+                </div>
+            </div>
+
+            <div id="draft-list-container" class="flex-1 overflow-y-auto p-4 md:p-8 pb-20">
+            </div>
+
+            <div id="pagination-container" class="bg-white border-t border-gray-200 p-3 flex justify-center items-center gap-2 sticky bottom-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+            </div>
+        </main>
+    </div>
+
+    <div id="modal-draft" class="fixed inset-0 z-50 hidden flex items-center justify-center">
+        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity" data-close-modal="modal-draft"></div>
+        
+        <div class="relative w-full max-w-4xl mx-4 bg-white rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+            
+            <div class="p-5 md:p-6 border-b flex justify-between items-center bg-gray-50 shrink-0">
+                <h3 id="draft-modal-title" class="text-xl font-bold text-gray-800">새 기안 작성</h3>
+                <button class="text-gray-400 hover:text-gray-600 transition-colors" data-close-modal="modal-draft">
+                    <i class="bi bi-x-lg text-xl"></i>
+                </button>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-5 md:p-8 space-y-6">
+                <form id="draft-form" onsubmit="return false;">
+                    <input type="hidden" id="input-doc-id">
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-sm font-bold text-gray-700 mb-2">구분</label>
+                            <select id="input-category" class="w-full rounded-lg border-gray-300 border p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white" required>
+                                <option value="" disabled selected>선택하세요</option>
+                                <option>경비</option><option>보고</option><option>인사</option><option>직영수리비</option><option>기타</option><option class="text-red-500 font-bold">대외비</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-bold text-gray-700 mb-2">법인</label>
+                            <select id="input-corporation" class="w-full rounded-lg border-gray-300 border p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white" required>
+                                <option value="" disabled selected>선택하세요</option>
+                                <option>동영(파주)</option><option>동영투어</option><option>동영(용인)</option><option>동영(서울)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mt-4">
+                        <label class="block text-sm font-bold text-gray-700 mb-2">제목</label>
+                        <input type="text" id="input-title" class="w-full rounded-lg border-gray-300 border p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="제목을 입력하세요" required>
+                    </div>
+
+                    <div class="mt-4">
+                        <label class="block text-sm font-bold text-gray-700 mb-2">내용</label>
+                        <div id="input-content" class="w-full h-64 md:h-80 overflow-y-auto rounded-lg border-gray-300 border p-4 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-base leading-relaxed" contenteditable="true"></div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
+                        <div>
+                            <label class="block text-sm font-bold text-gray-700 mb-2">1차 결재자</label>
+                            <input type="text" id="input-approver1" list="approvers-datalist" class="w-full rounded-lg border-gray-300 border p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="이름 검색" required>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-bold text-gray-700 mb-2">2차 결재자</label>
+                            <input type="text" id="input-approver2" list="approvers-datalist-2" class="w-full rounded-lg border-gray-300 border p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="이름 검색" required>
+                        </div>
+                    </div>
+                    <datalist id="approvers-datalist"></datalist>
+                    <datalist id="approvers-datalist-2"></datalist>
+
+                    <div class="mt-4 p-4 bg-gray-50 rounded-xl border border-gray-100">
+                        <div class="mb-3">
+                            <label class="block text-sm font-bold text-gray-700 mb-2">참조 링크</label>
+                            <div id="ref-links-wrapper" class="space-y-2"></div>
+                            <button type="button" onclick="addRefLinkInput()" class="text-sm text-blue-600 hover:text-blue-800 font-medium inline-flex items-center gap-1 mt-1">
+                                <i class="bi bi-plus-circle"></i> 링크 추가
+                            </button>
+                        </div>
+                        
+                        <div class="mb-3">
+                             <label class="block text-sm font-bold text-gray-700 mb-2">참조 부서</label>
+                             <select id="input-ref" class="w-full rounded-lg border-gray-300 border p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white">
+                                 <option value="">불러오는 중...</option>
+                             </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-bold text-gray-700 mb-2">첨부파일</label>
+                            <input type="file" id="input-attachments" multiple class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-blue-100 file:text-blue-700 hover:file:bg-blue-200 transition cursor-pointer">
+                        </div>
+                    </div>
+                </form>
+            </div>
+            
+            <div class="p-5 md:p-6 border-t bg-gray-50 flex justify-end gap-3 shrink-0 rounded-b-2xl">
+                <button data-close-modal="modal-draft" class="px-5 py-2.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 font-medium text-sm transition-colors">취소</button>
+                <button id="btn-save-draft" class="px-6 py-2.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-bold shadow-lg shadow-blue-500/30 text-sm transition-transform active:scale-95">저장하기</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-detail" class="fixed inset-0 z-50 hidden">
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" data-close-modal="modal-detail"></div>
+        <div class="absolute inset-0 m-auto max-w-4xl max-h-[90vh] w-[95%] bg-white rounded-xl shadow-2xl flex flex-col overflow-hidden">
+            <div class="p-4 md:p-6 border-b flex justify-between items-center bg-gray-50">
+                <div class="min-w-0 pr-4">
+                    <span class="text-xs font-bold text-gray-400 block mb-1 truncate" id="detail-doc-id">DOC-ID</span>
+                    <h3 class="text-lg md:text-xl font-bold text-gray-800 truncate" id="detail-title">제목</h3>
+                </div>
+                <button class="text-gray-400 hover:text-gray-600 shrink-0" data-close-modal="modal-detail"><i class="bi bi-x-lg text-2xl"></i></button>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-4 md:p-8">
+                <div id="detail-info" class="flex flex-col mb-6 pb-6 border-b"></div>
+
+                <div class="flex items-center justify-center gap-2 md:gap-4 mb-6 md:mb-8 bg-gray-50 p-4 md:p-6 rounded-xl border border-gray-100 overflow-x-auto">
+                    <div class="text-center shrink-0">
+                        <div class="font-bold text-sm">기안</div>
+                        <div class="text-gray-500 text-xs mt-1">작성</div>
+                    </div>
+                    <i class="bi bi-arrow-right text-gray-300"></i>
+                    <div id="detail-appr1" class="text-center min-w-[70px] shrink-0"></div>
+                    <i class="bi bi-arrow-right text-gray-300"></i>
+                    <div id="detail-appr2" class="text-center min-w-[70px] shrink-0"></div>
+                </div>
+
+                <div id="detail-content" class="prose max-w-none mb-8 min-h-[150px] border p-4 rounded-lg text-sm md:text-base"></div>
+
+                <div class="space-y-4">
+                    <div id="detail-links"></div>
+                    <div id="detail-files" class="flex flex-wrap"></div>
+                </div>
+
+                <div id="detail-payment-area" class="mt-8 pt-6 border-t border-dashed border-gray-300 hidden">
+                    <h4 class="font-bold text-gray-800 mb-3 text-sm"><i class="bi bi-wallet2"></i> 회계팀 처리</h4>
+                    <div id="repair-cost-display" class="mb-3"></div>
+                    <div class="flex items-center gap-3">
+                        <input type="date" id="detail-payment-date-input" class="border p-2 rounded text-sm">
+                        <button onclick="savePaymentDate(document.getElementById('detail-doc-id').textContent)" class="bg-gray-800 text-white px-3 py-2 rounded hover:bg-black text-xs">지급일 저장</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="p-4 border-t bg-white flex justify-end gap-2" id="detail-actions">
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-comment" class="fixed inset-0 z-[60] hidden flex items-center justify-center">
+        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity" onclick="closeCommentModal()"></div>
+        
+        <div class="relative w-full max-w-md mx-4 bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-fade-in-up">
+            <div class="p-5 border-b bg-gray-50 flex justify-between items-center">
+                <h3 id="comment-modal-title" class="text-lg font-bold text-gray-800">결재 승인</h3>
+                <button onclick="closeCommentModal()" class="text-gray-400 hover:text-gray-600 transition-colors">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+            
+            <div class="p-5">
+                <div id="comment-desc" class="text-sm text-gray-600 mb-2">의견을 입력해주세요. (엔터키로 줄바꿈 가능)</div>
+                <textarea id="input-comment-text" class="w-full h-32 p-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none text-sm leading-relaxed" placeholder="내용을 입력하세요..."></textarea>
+                
+                <div id="comment-warning" class="hidden mt-2 text-xs text-red-500 font-bold flex items-center gap-1">
+                    <i class="bi bi-exclamation-circle"></i> 반려 시에는 사유를 반드시 입력해야 합니다.
+                </div>
+            </div>
+
+            <div class="p-4 border-t bg-gray-50 flex justify-end gap-2">
+                <button onclick="closeCommentModal()" class="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 text-sm font-medium">취소</button>
+                <button id="btn-submit-comment" onclick="submitApprovalComment()" class="px-5 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-sm font-bold shadow-md">확인</button>
+            </div>
+        </div>
+    </div>
+
+</body>
 </html>
