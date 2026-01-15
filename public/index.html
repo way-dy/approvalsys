@@ -12,7 +12,8 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-        import { getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, query, where, orderBy, runTransaction, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        // [수정] limit, enableIndexedDbPersistence 추가
+        import { getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, query, where, orderBy, runTransaction, serverTimestamp, limit, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
         import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js";
 
         // =========================================================================
@@ -38,6 +39,15 @@
         const db = getFirestore(app);
         const storage = getStorage(app);
         const provider = new GoogleAuthProvider();
+
+        // [신규] 오프라인 지속성 활성화 (로딩 속도 향상)
+        enableIndexedDbPersistence(db).catch((err) => {
+            if (err.code == 'failed-precondition') {
+                console.log('여러 탭이 열려있어 오프라인 모드 실패');
+            } else if (err.code == 'unimplemented') {
+                console.log('브라우저가 지원하지 않음');
+            }
+        });
 
         let currentUser = null;
         let userList = [];
@@ -116,10 +126,12 @@
             document.getElementById('btn-login').addEventListener('click', () => signInWithPopup(auth, provider));
             document.getElementById('btn-logout').addEventListener('click', () => signOut(auth));
             document.getElementById('btn-new-draft').addEventListener('click', openNewDraftModal);
+            
+            // [수정] 새로고침 버튼 로직 개선 (강제 업데이트 true 전달)
             document.getElementById('btn-refresh').addEventListener('click', () => {
                 showToast('데이터를 새로고침합니다.');
                 const activeTab = document.querySelector('.nav-item.active').dataset.target;
-                loadDrafts(activeTab);
+                loadDrafts(activeTab, true);
             });
 
             // 검색 입력 시 실시간 필터링 이벤트
@@ -147,6 +159,7 @@
                     document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active', 'bg-blue-50', 'text-blue-600'));
                     e.currentTarget.classList.add('active', 'bg-blue-50', 'text-blue-600');
                     const target = e.currentTarget.dataset.target;
+                    // 메뉴 이동 시에는 캐시된 데이터 사용 (forceUpdate 없음)
                     loadDrafts(target);
                     
                     if (window.innerWidth < 768) {
@@ -233,19 +246,36 @@
             select.innerHTML = html;
         }
 
-        async function loadDrafts(listType) {
+        // [최적화 수정] 캐싱 로직 및 forceUpdate 적용
+        async function loadDrafts(listType, forceUpdate = false) {
             const listContainer = document.getElementById('draft-list-container');
-            listContainer.innerHTML = '<div class="flex justify-center p-10"><div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div></div>';
+            
+            // 데이터가 없거나 강제 업데이트 시에만 로딩 표시
+            if (allFetchedData.length === 0 || forceUpdate) {
+                listContainer.innerHTML = '<div class="flex justify-center p-10"><div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div></div>';
+            }
+            
             document.getElementById('page-title').textContent = getTitleByListType(listType);
             document.getElementById('search-input').value = '';
 
             try {
-                const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'));
-                const querySnapshot = await getDocs(q);
-                let drafts = [];
-                querySnapshot.forEach((doc) => { drafts.push({ id: doc.id, ...doc.data() }); });
+                // 캐시된 데이터가 없거나 강제 업데이트인 경우에만 DB 조회
+                if (allFetchedData.length === 0 || forceUpdate) {
+                    // [최적화] 최근 500개 문서만 가져오도록 limit 추가
+                    const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(500));
+                    
+                    const querySnapshot = await getDocs(q);
+                    let drafts = [];
+                    querySnapshot.forEach((doc) => { drafts.push({ id: doc.id, ...doc.data() }); });
+                    
+                    allFetchedData = drafts; // 메모리에 저장
+                    console.log("DB 데이터 로드 완료");
+                } else {
+                    console.log("캐시 데이터 사용");
+                }
                 
-                allFetchedData = drafts.filter(draft => filterDraft(draft, listType));
+                // 메모리에 있는 데이터를 필터링
+                filteredDisplayData = allFetchedData.filter(draft => filterDraft(draft, listType));
                 
                 currentPage = 1;
                 runSearch(''); 
@@ -259,13 +289,17 @@
         function runSearch(keyword) {
             const term = keyword.toLowerCase().trim();
             if (!term) {
-                filteredDisplayData = allFetchedData;
+                filteredDisplayData = allFetchedData.filter(draft => filterDraft(draft, document.querySelector('.nav-item.active').dataset.target));
             } else {
+                // 검색 시에는 현재 탭의 조건 + 검색어 조건
+                const activeTab = document.querySelector('.nav-item.active').dataset.target;
                 filteredDisplayData = allFetchedData.filter(draft => {
-                    return (draft.title && draft.title.toLowerCase().includes(term)) ||
+                    const matchesFilter = filterDraft(draft, activeTab);
+                    const matchesKeyword = (draft.title && draft.title.toLowerCase().includes(term)) ||
                            (draft.drafter && draft.drafter.toLowerCase().includes(term)) ||
                            (draft.docId && draft.docId.toLowerCase().includes(term)) ||
                            (draft.corporation && draft.corporation.includes(term));
+                    return matchesFilter && matchesKeyword;
                 });
             }
             currentPage = 1;
@@ -482,8 +516,9 @@
                 closeModal('modal-draft'); 
                 showToast(isNew ? (isJeonGyeol ? '등록 완료 (1차 전결)' : '등록 완료') : '수정 완료');
                 
+                // [수정] 저장 후에는 목록을 갱신해야 하므로 forceUpdate=true 사용
                 const activeTab = document.querySelector('.nav-item.active').dataset.target;
-                loadDrafts(activeTab);
+                loadDrafts(activeTab, true);
 
             } catch (error) { 
                 console.error(error); 
@@ -594,7 +629,8 @@
                 closeCommentModal();
                 closeModal('modal-detail'); 
                 showToast('처리 완료');
-                loadDrafts(document.querySelector('.nav-item.active').dataset.target);
+                // [수정] 결재 처리 후에도 목록 갱신 필요 (forceUpdate=true)
+                loadDrafts(document.querySelector('.nav-item.active').dataset.target, true);
             } catch (e) { 
                 alert('오류: ' + e.message); 
             } finally { 
@@ -621,7 +657,7 @@
                 syncToGoogleSheet(fullSyncedData);
                 alert('저장 완료'); 
                 closeModal('modal-detail'); 
-                loadDrafts(document.querySelector('.nav-item.active').dataset.target); 
+                loadDrafts(document.querySelector('.nav-item.active').dataset.target, true); // 지급일 저장 후 갱신 
             } catch(e) { alert(e.message); }
         }
 
