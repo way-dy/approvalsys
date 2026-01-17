@@ -12,7 +12,6 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-        // [수정] limit, enableIndexedDbPersistence 추가
         import { getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, query, where, orderBy, runTransaction, serverTimestamp, limit, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
         import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js";
 
@@ -71,7 +70,7 @@
         function initApp() {
             onAuthStateChanged(auth, async (user) => {
                 if (user) {
-                    showLoading('사용자 정보를 불러오는 중...');
+                    showLoading('사용자 정보를 확인 중입니다...');
                     await syncMetaData();
                     
                     const matchedUser = userList.find(u => u.email === user.email);
@@ -977,14 +976,15 @@
 
     <div id="loading-overlay" class="fixed inset-0 bg-white/90 z-50 flex flex-col justify-center items-center backdrop-blur-sm hidden">
         <div class="animate-spin rounded-full h-10 w-10 border-b-4 border-blue-600 mb-4"></div>
-        <p class="text-gray-600 font-medium text-sm">로딩중...</p>
+        <p class="text-gray-600 font-medium text-sm">동영관광 기안서 시스템을 구동중입니다</p>
     </div>
 
     <div id="login-view" class="h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 hidden">
         <div class="bg-white p-8 rounded-2xl shadow-2xl text-center max-w-sm w-full border border-white/50 mx-4">
             <div class="mb-8">
-                <div class="bg-blue-600 w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-500/30">
-                    <i class="bi bi-journal-check text-2xl text-white"></i>
+                <div class="flex justify-center mb-6">
+                    <img src="https://docs.google.com/drawings/d/e/2PACX-1vQC6X9H3jTLB8IurxAun_V99Sp9rDO0pwSgCb3HoIclg5LSgs3Xv_AKYbRqMt5crNIdvbhotXpN8I9M/pub?w=302&h=113" 
+                         alt="동영관광 로고" class="h-16 w-auto object-contain">
                 </div>
                 <h1 class="text-xl font-bold text-gray-800 mb-2">기안서 결재 시스템</h1>
                 <p class="text-gray-500 text-sm">Google 계정으로 로그인하세요.</p>
@@ -1001,9 +1001,10 @@
         <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden md:hidden" onclick="toggleSidebar()"></div>
 
         <aside id="main-sidebar" class="fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-gray-200 flex flex-col shadow-lg transform -translate-x-full transition-transform duration-300 md:translate-x-0 md:static md:flex md:shadow-none">
-            <div class="p-6 border-b border-gray-100 flex justify-between items-center">
-                <div class="flex items-center gap-3 text-blue-700 font-bold text-xl">
-                    <i class="bi bi-journal-bookmark-fill"></i> 동영 기안서시스템
+            <div class="p-6 border-b border-gray-100 flex justify-between items-center h-20">
+                <div class="flex items-center">
+                    <img src="https://docs.google.com/drawings/d/e/2PACX-1vQC6X9H3jTLB8IurxAun_V99Sp9rDO0pwSgCb3HoIclg5LSgs3Xv_AKYbRqMt5crNIdvbhotXpN8I9M/pub?w=302&h=113" 
+                         alt="동영관광" class="h-10 w-auto object-contain">
                 </div>
                 <button class="md:hidden text-gray-400" onclick="toggleSidebar()"><i class="bi bi-x-lg"></i></button>
             </div>
@@ -1058,7 +1059,7 @@
                         <div id="user-profile-email" class="text-xs text-gray-500 truncate">user@email.com</div>
                     </div>
                 </div>
-                <button id="btn-logout" class="w-full text-xs text-center text-gray-500 hover:text-red-500 py-1">로그아웃</button>
+                <button id="btn-logout" class="w-full text-xs text-center text-gray-500 hover:text-red-50 py-1">로그아웃</button>
             </div>
         </aside>
 
