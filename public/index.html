@@ -93,7 +93,7 @@
                     renderUserInfo();
                     toggleView('app-view');
                     
-                    // [수정] 결재 전용 사용자 UI 제어 로직
+                    // [수정] 결재 전용 사용자 및 URL 파라미터 처리 로직
                     if (currentUser.approvalOnly) {
                         // 1. '새 기안' 버튼 숨기기
                         document.getElementById('btn-new-draft').classList.add('hidden');
@@ -105,12 +105,25 @@
                         // 3. 시작 화면을 '결재할 문서'로 강제 변경
                         const toApproveBtn = document.querySelector('[data-target="toApprove"]');
                         if(toApproveBtn) {
-                            // 클릭 이벤트를 트리거하여 탭 활성화 및 loadDrafts 실행
                             toApproveBtn.click(); 
                         }
                     } else {
-                        // 일반 사용자는 기존대로 '내가 올린 기안' 표시
-                        loadDrafts('myDrafts');
+                        // [수정] 일반 사용자: URL 파라미터(?menu=toApprove) 체크
+                        const urlParams = new URLSearchParams(window.location.search);
+                        const targetMenu = urlParams.get('menu');
+
+                        if (targetMenu === 'toApprove') {
+                            const toApproveBtn = document.querySelector('[data-target="toApprove"]');
+                            if (toApproveBtn) {
+                                // 파라미터가 있으면 '결재할 문서' 탭 클릭 (UI 활성화 및 데이터 로드)
+                                toApproveBtn.click();
+                            } else {
+                                loadDrafts('myDrafts');
+                            }
+                        } else {
+                            // 파라미터 없으면 기본값 '내가 올린 기안'
+                            loadDrafts('myDrafts');
+                        }
                     }
                     
                     if (currentUser.team === '회계팀') document.getElementById('nav-accounting').classList.remove('hidden');
