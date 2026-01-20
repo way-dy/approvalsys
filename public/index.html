@@ -777,8 +777,12 @@
                 btnArea.innerHTML = `<button onclick="processApproval('${draft.docId}', 'approve')" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 mr-2 text-sm shadow-sm">승인</button><button onclick="processApproval('${draft.docId}', 'reject')" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm shadow-sm">반려</button>`;
             }
 
-            // [수정] approvalOnly가 true인 경우 수정 버튼 숨김
-            if (draft.drafterEmail === currentUser.email && !draft.approval1Status && !currentUser.approvalOnly) {
+            // [로직 변경] 1차 전결인 경우, 2차 결재 전까지는 수정 가능하도록 허용
+            const isJeonGyeol = draft.approver1Name === '전결' || draft.approver1Email === 'jeongyeol';
+            const canEdit = (draft.drafterEmail === currentUser.email && !currentUser.approvalOnly) && 
+                            (!draft.approval1Status || (isJeonGyeol && !draft.approval2Status));
+
+            if (canEdit) {
                 btnArea.innerHTML += `<button onclick="editDraft('${draft.docId}')" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 mr-2 text-sm flex items-center gap-1 shadow-sm"><i class="bi bi-pencil"></i> 수정</button>`;
             }
 
