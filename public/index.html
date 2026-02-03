@@ -76,9 +76,7 @@
             onAuthStateChanged(auth, async (user) => {
                 if (user) {
                     showLoading('사용자 정보를 확인 중입니다...');
-                    syncMetaData().then(() => {
-                        console.log("메타데이터 로드 완료 - 백그라운드");
-                    });
+                    await syncMetaData();
                     
                     const matchedUser = userList.find(u => u.email === user.email);
                     if (matchedUser) {
@@ -281,7 +279,7 @@
                 // 캐시된 데이터가 없거나 강제 업데이트인 경우에만 DB 조회
                 if (allFetchedData.length === 0 || forceUpdate) {
                     // [최적화] 최근 500개 문서만 가져오도록 limit 추가
-                    const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(100));
+                    const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(500));
                     
                     const querySnapshot = await getDocs(q);
                     let drafts = [];
