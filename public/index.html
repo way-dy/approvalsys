@@ -235,26 +235,17 @@
             }
         }
 
-        // [최적화 수정] Promise.all을 사용한 병렬 처리
         async function syncMetaData() {
             try {
-                const [usersDoc, repairDoc] = await Promise.all([
-                    getDoc(doc(db, 'meta', 'users')),
-                    getDoc(doc(db, 'meta', 'repairMap'))
-                ]);
-
+                const usersDoc = await getDoc(doc(db, 'meta', 'users'));
                 if (usersDoc.exists()) { 
                     userList = usersDoc.data().list || []; 
                     updateApproverList(); 
                     updateRefDeptList(); 
                 }
-                
-                if (repairDoc.exists()) { 
-                    repairMap = repairDoc.data().map || {}; 
-                }
-            } catch (error) { 
-                console.error("메타 데이터 동기화 실패:", error); 
-            }
+                const repairDoc = await getDoc(doc(db, 'meta', 'repairMap'));
+                if (repairDoc.exists()) { repairMap = repairDoc.data().map || {}; }
+            } catch (error) { console.error(error); }
         }
 
         function updateRefDeptList() {
@@ -272,7 +263,7 @@
             select.innerHTML = html;
         }
 
-        // [최적화 수정] 캐싱 로직 및 forceUpdate 적용, 쿼리 최적화
+        // [최적화 수정] 캐싱 로직 및 forceUpdate 적용
         async function loadDrafts(listType, forceUpdate = false) {
             const listContainer = document.getElementById('draft-list-container');
             
@@ -287,27 +278,15 @@
             try {
                 // 캐시된 데이터가 없거나 강제 업데이트인 경우에만 DB 조회
                 if (allFetchedData.length === 0 || forceUpdate) {
-                    let q;
-                    
-                    // [최적화] '내가 올린 기안' 탭일 경우 내 것만 100개 가져옴 (속도 대폭 향상)
-                    if (listType === 'myDrafts' && currentUser) {
-                         q = query(
-                            collection(db, 'drafts'), 
-                            where('drafterEmail', '==', currentUser.email),
-                            orderBy('createdAt', 'desc'), 
-                            limit(100)
-                        );
-                    } else {
-                        // 그 외의 경우 전체에서 최근 70개만 가져옴 (기존 500개 -> 70개로 축소)
-                        q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(70));
-                    }
+                    // [최적화] 최근 500개 문서만 가져오도록 limit 추가
+                    const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(500));
                     
                     const querySnapshot = await getDocs(q);
                     let drafts = [];
                     querySnapshot.forEach((doc) => { drafts.push({ id: doc.id, ...doc.data() }); });
                     
                     allFetchedData = drafts; // 메모리에 저장
-                    console.log("DB 데이터 로드 완료 (" + drafts.length + "개)");
+                    console.log("DB 데이터 로드 완료");
                 } else {
                     console.log("캐시 데이터 사용");
                 }
