@@ -62,10 +62,7 @@
         let currentPage = 1;          
         const itemsPerPage = 10;      
         let allFetchedData = [];      
-        let filteredDisplayData = [];
-        
-        // [최적화] 이전 쿼리 타입 기억 (캐시 무효화용)
-        let lastFetchedType = null;
+        let filteredDisplayData = []; 
 
         // [신규] 결재 처리를 위한 상태 변수
         let pendingDocId = null;
@@ -78,46 +75,56 @@
         function initApp() {
             onAuthStateChanged(auth, async (user) => {
                 if (user) {
-                    // 1. 로딩 UI 업데이트
-                    showLoading('접속 중...');
-
-                    // 2. [최적화] 메타데이터 백그라운드 로드 (await 제거)
-                    // 데이터가 로드되면 사용자 정보를 갱신하고 화면을 다시 그림
-                    if (userList.length === 0) {
-                        syncMetaData().then(() => {
-                            console.log('메타데이터 백그라운드 로드 완료');
-                            // 사용자 정보 매칭 및 업데이트
-                            updateCurrentUser(user);
-                            renderUserInfo();
-                            // 부서 정보 등이 로드되었으므로 참조 부서 리스트 등 업데이트
-                            updateRefDeptList();
-                        });
+                    showLoading('사용자 정보를 확인 중입니다...');
+                    await syncMetaData();
+                    
+                    const matchedUser = userList.find(u => u.email === user.email);
+                    if (matchedUser) {
+                        // [수정] approvalOnly 속성 추가
+                        currentUser = { 
+                            ...user, 
+                            name: matchedUser.name, 
+                            team: matchedUser.team || '', 
+                            role: matchedUser.role || '일반', 
+                            confidentialAccess: matchedUser.confidentialAccess,
+                            approvalOnly: matchedUser.approvalOnly || false 
+                        };
+                    } else {
+                        currentUser = { ...user, name: user.displayName, team: '', role: '미등록', confidentialAccess: false, approvalOnly: false };
                     }
-
-                    // 3. 일단 기본 정보로 로그인 처리 (빠른 화면 진입)
-                    updateCurrentUser(user);
 
                     renderUserInfo();
                     toggleView('app-view');
-                    hideLoading(); // 화면 즉시 표시
-
-                    // 4. 권한별 초기 화면 라우팅
+                    
+                    // [수정] 결재 전용 사용자 및 URL 파라미터 처리 로직
                     if (currentUser.approvalOnly) {
+                        // 1. '새 기안' 버튼 숨기기
                         document.getElementById('btn-new-draft').classList.add('hidden');
+                        
+                        // 2. '내가 올린 기안' 사이드바 메뉴 숨기기
                         const myDraftBtn = document.querySelector('[data-target="myDrafts"]');
                         if(myDraftBtn) myDraftBtn.classList.add('hidden');
-                        
+
+                        // 3. 시작 화면을 '결재할 문서'로 강제 변경
                         const toApproveBtn = document.querySelector('[data-target="toApprove"]');
-                        if(toApproveBtn) toApproveBtn.click(); 
+                        if(toApproveBtn) {
+                            toApproveBtn.click(); 
+                        }
                     } else {
+                        // [수정] 일반 사용자: URL 파라미터(?menu=toApprove) 체크
                         const urlParams = new URLSearchParams(window.location.search);
                         const targetMenu = urlParams.get('menu');
 
                         if (targetMenu === 'toApprove') {
                             const toApproveBtn = document.querySelector('[data-target="toApprove"]');
-                            if (toApproveBtn) toApproveBtn.click();
-                            else loadDrafts('myDrafts');
+                            if (toApproveBtn) {
+                                // 파라미터가 있으면 '결재할 문서' 탭 클릭 (UI 활성화 및 데이터 로드)
+                                toApproveBtn.click();
+                            } else {
+                                loadDrafts('myDrafts');
+                            }
                         } else {
+                            // 파라미터 없으면 기본값 '내가 올린 기안'
                             loadDrafts('myDrafts');
                         }
                     }
@@ -126,7 +133,7 @@
                     if (currentUser.role === '대표' || currentUser.confidentialAccess) {
                          document.querySelectorAll('.confidential-menu').forEach(el => { el.classList.remove('hidden'); el.classList.add('flex'); });
                     }
-                    
+                    hideLoading();
                 } else {
                     currentUser = null;
                     toggleView('login-view');
@@ -137,29 +144,29 @@
             document.getElementById('btn-logout').addEventListener('click', () => signOut(auth));
             document.getElementById('btn-new-draft').addEventListener('click', openNewDraftModal);
             
-            // [수정] 새로고침 버튼
+            // [수정] 새로고침 버튼 로직 개선 (강제 업데이트 true 전달)
             document.getElementById('btn-refresh').addEventListener('click', () => {
                 showToast('데이터를 새로고침합니다.');
                 const activeTab = document.querySelector('.nav-item.active').dataset.target;
                 loadDrafts(activeTab, true);
             });
 
-            // 검색 입력 시 이벤트
+            // 검색 입력 시 실시간 필터링 이벤트
             document.getElementById('search-input').addEventListener('keyup', (e) => {
                 runSearch(e.target.value);
             });
             
-            // 모바일 메뉴 토글
+            // 모바일 메뉴 토글 로직
             const sidebar = document.getElementById('main-sidebar');
             const overlay = document.getElementById('sidebar-overlay');
             
             window.toggleSidebar = () => {
                 const isClosed = sidebar.classList.contains('-translate-x-full');
                 if (isClosed) {
-                    sidebar.classList.remove('-translate-x-full'); 
+                    sidebar.classList.remove('-translate-x-full'); // 열기
                     overlay.classList.remove('hidden');
                 } else {
-                    sidebar.classList.add('-translate-x-full');
+                    sidebar.classList.add('-translate-x-full'); // 닫기
                     overlay.classList.add('hidden');
                 }
             };
@@ -169,14 +176,8 @@
                     document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active', 'bg-blue-50', 'text-blue-600'));
                     e.currentTarget.classList.add('active', 'bg-blue-50', 'text-blue-600');
                     const target = e.currentTarget.dataset.target;
-                    
-                    // [최적화] 쿼리 전략이 다르면 강제 업데이트
-                    // (예: 내 기안만 보다가 전체 기안 볼 때, 혹은 그 반대)
-                    const isMyDrafts = target === 'myDrafts';
-                    const wasMyDrafts = lastFetchedType === 'myDrafts';
-                    const forceUpdate = (isMyDrafts !== wasMyDrafts);
-
-                    loadDrafts(target, forceUpdate);
+                    // 메뉴 이동 시에는 캐시된 데이터 사용 (forceUpdate 없음)
+                    loadDrafts(target);
                     
                     if (window.innerWidth < 768) {
                         window.toggleSidebar();
@@ -189,30 +190,6 @@
             });
             
             document.getElementById('btn-save-draft').addEventListener('click', saveDraft);
-        }
-
-        // 사용자 정보 객체 생성/갱신 헬퍼 함수
-        function updateCurrentUser(user) {
-            const matchedUser = userList.find(u => u.email === user.email);
-            if (matchedUser) {
-                currentUser = { 
-                    ...user, 
-                    name: matchedUser.name, 
-                    team: matchedUser.team || '', 
-                    role: matchedUser.role || '일반', 
-                    confidentialAccess: matchedUser.confidentialAccess,
-                    approvalOnly: matchedUser.approvalOnly || false 
-                };
-            } else {
-                currentUser = { 
-                    ...user, 
-                    name: user.displayName || '사용자', 
-                    team: '', 
-                    role: '미등록', 
-                    confidentialAccess: false, 
-                    approvalOnly: false 
-                };
-            }
         }
 
         async function syncToGoogleSheet(draftData) {
@@ -301,33 +278,15 @@
             try {
                 // 캐시된 데이터가 없거나 강제 업데이트인 경우에만 DB 조회
                 if (allFetchedData.length === 0 || forceUpdate) {
-                    
-                    let q;
-                    // [최적화 핵심] '내가 올린 기안'일 경우 내 이메일로만 필터링 (속도 향상)
-                    if (listType === 'myDrafts') {
-                        lastFetchedType = 'myDrafts';
-                        q = query(
-                            collection(db, 'drafts'), 
-                            where('drafterEmail', '==', currentUser.email), 
-                            orderBy('createdAt', 'desc'), 
-                            limit(100) // 100개로 제한
-                        );
-                    } else {
-                        // 그 외의 경우 (결재할 문서 등)는 전체 조회 후 메모리 필터링
-                        lastFetchedType = 'others';
-                        q = query(
-                            collection(db, 'drafts'), 
-                            orderBy('createdAt', 'desc'), 
-                            limit(100) // 100개로 제한
-                        );
-                    }
+                    // [최적화] 최근 500개 문서만 가져오도록 limit 추가
+                    const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(500));
                     
                     const querySnapshot = await getDocs(q);
                     let drafts = [];
                     querySnapshot.forEach((doc) => { drafts.push({ id: doc.id, ...doc.data() }); });
                     
                     allFetchedData = drafts; // 메모리에 저장
-                    console.log(`DB 데이터 로드 완료 (${drafts.length}건)`);
+                    console.log("DB 데이터 로드 완료");
                 } else {
                     console.log("캐시 데이터 사용");
                 }
@@ -340,17 +299,7 @@
 
             } catch (error) {
                 console.error(error);
-                // [중요] 인덱스 에러 처리 (Firebase 콘솔 링크 안내)
-                if (error.message.includes('index')) {
-                    const link = error.message.match(/https?:\/\/[^\s]+/)[0];
-                    listContainer.innerHTML = `<div class="text-center p-10 text-red-500 font-bold">
-                        시스템 성능 최적화를 위해 데이터베이스 설정이 필요합니다.<br>
-                        <a href="${link}" target="_blank" class="underline text-blue-600">이곳을 클릭하여 인덱스를 생성해주세요.</a><br>
-                        (생성 후 잠시 뒤에 새로고침 하세요)
-                    </div>`;
-                } else {
-                    listContainer.innerHTML = `<div class="text-center p-10 text-gray-500">데이터 로드 실패<br>${error.message}</div>`;
-                }
+                listContainer.innerHTML = `<div class="text-center p-10 text-gray-500">데이터 로드 실패<br>${error.message}</div>`;
             }
         }
 
@@ -359,6 +308,7 @@
             if (!term) {
                 filteredDisplayData = allFetchedData.filter(draft => filterDraft(draft, document.querySelector('.nav-item.active').dataset.target));
             } else {
+                // 검색 시에는 현재 탭의 조건 + 검색어 조건
                 const activeTab = document.querySelector('.nav-item.active').dataset.target;
                 filteredDisplayData = allFetchedData.filter(draft => {
                     const matchesFilter = filterDraft(draft, activeTab);
@@ -523,6 +473,8 @@
                 const isNew = !docId;
                 const fileInput = document.getElementById('input-attachments');
 
+                // [수정] 기존에는 draftCache에서 바로 가져왔으나, 
+                // 이제는 화면에서 편집된 currentAttachments 배열을 베이스로 사용합니다.
                 let finalAttachments = [...currentAttachments];
                 
                 if (fileInput.files.length > 0) {
@@ -563,6 +515,7 @@
                     approver2Email: document.getElementById('input-approver2').value,
                     approver2Name: getUserNameByEmail(document.getElementById('input-approver2').value),
                     
+                    // [변경] 최종적으로 합쳐진 파일 목록 저장
                     attachments: finalAttachments, 
                     
                     drafter: isNew ? currentUser.name : (draftCache[newDocId].drafter),
@@ -586,7 +539,7 @@
                 closeModal('modal-draft'); 
                 showToast(isNew ? (isJeonGyeol ? '등록 완료 (1차 전결)' : '등록 완료') : '수정 완료');
                 
-                // 저장 후에는 목록 갱신 (forceUpdate=true)
+                // [수정] 저장 후에는 목록을 갱신해야 하므로 forceUpdate=true 사용
                 const activeTab = document.querySelector('.nav-item.active').dataset.target;
                 loadDrafts(activeTab, true);
 
@@ -612,6 +565,7 @@
             });
         }
 
+        // [수정] 결재 처리를 모달 호출로 변경
         window.processApproval = (docId, action) => {
             pendingDocId = docId;
             pendingAction = action;
@@ -621,12 +575,13 @@
             const btn = document.getElementById('btn-submit-comment');
             const warning = document.getElementById('comment-warning');
 
+            // UI 변경 로직 (반려 시 빨간색 강조)
             if (action === 'reject') {
                 title.textContent = '반려 사유 입력';
                 title.classList.add('text-red-600');
                 btn.className = 'px-5 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 text-sm font-bold shadow-md';
                 btn.textContent = '반려하기';
-                warning.classList.remove('hidden'); 
+                warning.classList.remove('hidden'); // 필수 입력 경고 표시
             } else {
                 title.textContent = '결재 승인 의견';
                 title.classList.remove('text-red-600');
@@ -639,12 +594,14 @@
             modal.classList.remove('hidden');
         };
 
+        // [신규] 모달 닫기 함수
         window.closeCommentModal = () => {
             document.getElementById('modal-comment').classList.add('hidden');
             pendingDocId = null;
             pendingAction = null;
         };
 
+        // [신규] 모달에서 확인 버튼 클릭 시 실제 처리 함수
         window.submitApprovalComment = async () => {
             const comment = document.getElementById('input-comment-text').value.trim();
             const docId = pendingDocId;
@@ -655,6 +612,7 @@
                 return; 
             }
 
+            // UI 잠금
             const btn = document.getElementById('btn-submit-comment');
             btn.disabled = true;
             btn.innerText = '처리 중...';
@@ -694,12 +652,13 @@
                 closeCommentModal();
                 closeModal('modal-detail'); 
                 showToast('처리 완료');
+                // [수정] 결재 처리 후에도 목록 갱신 필요 (forceUpdate=true)
                 loadDrafts(document.querySelector('.nav-item.active').dataset.target, true);
             } catch (e) { 
                 alert('오류: ' + e.message); 
             } finally { 
                 hideLoading();
-                btn.disabled = false;
+                btn.disabled = false; // 버튼 복구
             }
         };
 
@@ -721,7 +680,7 @@
                 syncToGoogleSheet(fullSyncedData);
                 alert('저장 완료'); 
                 closeModal('modal-detail'); 
-                loadDrafts(document.querySelector('.nav-item.active').dataset.target, true);
+                loadDrafts(document.querySelector('.nav-item.active').dataset.target, true); // 지급일 저장 후 갱신 
             } catch(e) { alert(e.message); }
         }
 
@@ -749,6 +708,7 @@
             document.getElementById('input-content').innerHTML = '';
             document.getElementById('draft-modal-title').textContent = '새 기안 작성';
             
+            // [신규] 첨부파일 목록 초기화
             currentAttachments = [];
             renderCurrentAttachments(); 
 
@@ -826,9 +786,11 @@
             const isAppr2 = draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status;
             
             if (isAppr1 || isAppr2) {
+                // processApproval 호출 시 prompt 대신 모달 로직을 타게 됨
                 btnArea.innerHTML = `<button onclick="processApproval('${draft.docId}', 'approve')" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 mr-2 text-sm shadow-sm">승인</button><button onclick="processApproval('${draft.docId}', 'reject')" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm shadow-sm">반려</button>`;
             }
 
+            // [로직 변경] 1차 전결인 경우, 2차 결재 전까지는 수정 가능하도록 허용
             const isJeonGyeol = draft.approver1Name === '전결' || draft.approver1Email === 'jeongyeol';
             const canEdit = (draft.drafterEmail === currentUser.email && !currentUser.approvalOnly) && 
                             (!draft.approval1Status || (isJeonGyeol && !draft.approval2Status));
@@ -841,6 +803,7 @@
                 btnArea.innerHTML += `<button onclick="triggerRemind('${draft.docId}')" class="bg-orange-500 text-white px-4 py-2 rounded hover:bg-orange-600 ml-2 text-sm flex items-center gap-1 shadow-sm"><i class="bi bi-bell"></i> 독촉</button>`;
             }
 
+            // [수정] 결재 완료 조건문(if) 제거 -> 항상 인쇄 버튼 표시
             btnArea.innerHTML += `<button onclick="window.print()" class="bg-gray-700 text-white px-4 py-2 rounded hover:bg-gray-800 ml-2 text-sm flex items-center gap-1 shadow-sm"><i class="bi bi-printer"></i> 인쇄</button>`;
 
             const paymentArea = document.getElementById('detail-payment-area');
@@ -869,6 +832,7 @@
             document.getElementById('input-approver1').value = draft.approver1Email;
             document.getElementById('input-approver2').value = draft.approver2Email;
             
+            // [신규] 기존 첨부파일 데이터를 전역 변수에 복사하고 렌더링
             currentAttachments = draft.attachments ? [...draft.attachments] : [];
             renderCurrentAttachments();
             
@@ -893,6 +857,7 @@
             showToast('내용을 수정 후 저장하세요.');
         };
         
+        // [신규] 현재 첨부파일 목록 렌더링 함수
         function renderCurrentAttachments() {
             const container = document.getElementById('existing-files-area');
             if (!container) return;
@@ -915,10 +880,11 @@
             });
         }
 
+        // [신규] 첨부파일 개별 삭제 함수
         window.removeAttachment = (index) => {
             if (confirm('이 첨부파일을 삭제하시겠습니까? (저장 시 반영됩니다)')) {
-                currentAttachments.splice(index, 1);
-                renderCurrentAttachments(); 
+                currentAttachments.splice(index, 1); // 배열에서 해당 인덱스 제거
+                renderCurrentAttachments(); // 다시 그리기
             }
         };
 
@@ -956,9 +922,11 @@
         function updateApproverList() { 
             const userOptions = userList.map(u => `<option value="${u.email}">${u.name} (${u.team})</option>`).join('');
             
+            // 1차 결재자 리스트 (전결 포함)
             const list1 = document.getElementById('approvers-datalist');
             if (list1) list1.innerHTML = `<option value="전결">1차 전결 (바로 2차 결재로 이동)</option>` + userOptions; 
             
+            // 2차 결재자 리스트 (전결 제외)
             const list2 = document.getElementById('approvers-datalist-2');
             if (list2) list2.innerHTML = userOptions;
         }
@@ -999,10 +967,12 @@
         ::-webkit-scrollbar-track { background: #f1f1f1; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
         
+        /* [신규] 모달 애니메이션 추가 */
         @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fade-in-up { animation: fadeInUp 0.3s ease-out; }
 
         @media print {
+            /* 1. HTML과 BODY의 높이 제한 해제 및 스크롤 허용 */
             html, body {
                 width: 100%;
                 height: auto !important;
@@ -1012,52 +982,59 @@
                 padding: 0 !important;
             }
 
+            /* 2. 화면의 모든 요소를 숨김 (공간 차지 안 함) */
             body > * {
                 display: none !important;
             }
 
+            /* 3. 상세 모달(#modal-detail)만 보이게 설정 */
             #modal-detail {
                 display: block !important;
-                position: static !important; 
+                position: static !important; /* 고정 위치 해제 (중요) */
                 width: 100% !important;
                 height: auto !important;
                 inset: auto !important;
-                overflow: visible !important; 
+                overflow: visible !important; /* 넘치는 내용 표시 */
                 background: white !important;
                 border: none !important;
                 box-shadow: none !important;
                 z-index: auto !important;
             }
 
+            /* 4. 모달 내부의 카드(흰색 박스) 스타일 초기화 */
+            /* 기존의 absolute, max-h-[90vh], overflow-hidden 속성을 무력화 */
             #modal-detail > div:not([data-close-modal]) {
                 position: static !important;
                 width: 100% !important;
                 max-width: 100% !important;
                 height: auto !important;
-                max-height: none !important; 
-                overflow: visible !important; 
+                max-height: none !important; /* 높이 제한 해제 */
+                overflow: visible !important; /* 내용 잘림 방지 */
                 margin: 0 !important;
                 padding: 0 !important;
                 box-shadow: none !important;
                 border: none !important;
             }
 
+            /* 5. 내부 스크롤 영역 높이 제한 해제 */
             #modal-detail .overflow-y-auto {
                 height: auto !important;
                 max-height: none !important;
                 overflow: visible !important;
             }
 
+            /* 6. 모달 내부 텍스트 및 내용 강제 표시 */
             #modal-detail * {
                 visibility: visible !important;
             }
 
-            [data-close-modal],        
-            #detail-actions,           
-            #loading-overlay,          
-            button,                    
-            .bi-x-lg,                 
-            ::-webkit-scrollbar {      
+            /* 7. 불필요한 UI 요소 숨김 (닫기 버튼, 하단 버튼, 배경 등) */
+            [data-close-modal],        /* 검은 배경 및 닫기 트리거 */
+            #detail-actions,           /* 승인/반려/수정/인쇄 버튼 영역 */
+            #loading-overlay,          /* 로딩 오버레이 */
+            button,                    /* 모든 버튼 */
+            .bi-x-lg,                 /* 닫기 아이콘 */
+            ::-webkit-scrollbar {      /* 스크롤바 숨김 */
                 display: none !important;
             }
         }
