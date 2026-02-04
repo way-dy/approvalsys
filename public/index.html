@@ -75,15 +75,8 @@
         function initApp() {
             onAuthStateChanged(auth, async (user) => {
                 if (user) {
-                    // [최적화 1] 로컬 스토리지에서 먼저 데이터 로드 (즉시 렌더링)
-                    const cachedUserList = localStorage.getItem('dy_userList');
-                    const cachedRepairMap = localStorage.getItem('dy_repairMap');
-
-                    if (cachedUserList) userList = JSON.parse(cachedUserList);
-                    if (cachedRepairMap) repairMap = JSON.parse(cachedRepairMap);
-
-                    // [최적화 2] 메타데이터 동기화는 백그라운드에서 실행 (await 제거)
-                    syncMetaData(); 
+                    showLoading('사용자 정보를 확인 중입니다...');
+                    await syncMetaData();
                     
                     const matchedUser = userList.find(u => u.email === user.email);
                     if (matchedUser) {
@@ -247,18 +240,11 @@
                 const usersDoc = await getDoc(doc(db, 'meta', 'users'));
                 if (usersDoc.exists()) { 
                     userList = usersDoc.data().list || []; 
-                    // [최적화 3] 로컬 스토리지에 저장 (다음 접속 시 즉시 로딩용)
-                    localStorage.setItem('dy_userList', JSON.stringify(userList));
-                    
                     updateApproverList(); 
                     updateRefDeptList(); 
                 }
                 const repairDoc = await getDoc(doc(db, 'meta', 'repairMap'));
-                if (repairDoc.exists()) { 
-                    repairMap = repairDoc.data().map || {}; 
-                    // [최적화 3] 로컬 스토리지에 저장
-                    localStorage.setItem('dy_repairMap', JSON.stringify(repairMap));
-                }
+                if (repairDoc.exists()) { repairMap = repairDoc.data().map || {}; }
             } catch (error) { console.error(error); }
         }
 
@@ -292,15 +278,15 @@
             try {
                 // 캐시된 데이터가 없거나 강제 업데이트인 경우에만 DB 조회
                 if (allFetchedData.length === 0 || forceUpdate) {
-                    // [최적화 4] 최근 100개 문서만 가져오도록 limit 축소 (500 -> 100)
-                    const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(100));
+                    // [최적화] 최근 500개 문서만 가져오도록 limit 추가
+                    const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(500));
                     
                     const querySnapshot = await getDocs(q);
                     let drafts = [];
                     querySnapshot.forEach((doc) => { drafts.push({ id: doc.id, ...doc.data() }); });
                     
                     allFetchedData = drafts; // 메모리에 저장
-                    console.log("DB 데이터 로드 완료 (최근 100건)");
+                    console.log("DB 데이터 로드 완료");
                 } else {
                     console.log("캐시 데이터 사용");
                 }
