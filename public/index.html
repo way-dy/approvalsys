@@ -7,10 +7,77 @@
     
     <link rel="icon" type="image/png" href="https://docs.google.com/drawings/d/e/2PACX-1vTLDR3vD1FC_E0CxZDT3LYEJY3zqlvw1jtB_q1QUrAZX6RvdgUW3sOOaB70yNk_4AQs_7hKdovb4qTf/pub?w=128&h=128">
 
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- [최적화 1] preconnect로 DNS/TLS 미리 연결 -->
+    <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+    <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+
+    <!-- [최적화 2] DNS prefetch 추가 -->
+    <link rel="dns-prefetch" href="https://firebaseinstallations.googleapis.com">
+    <link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
+
+    <!-- [최적화 3] 폰트를 swap으로 로딩하여 FOIT 방지 -->
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     
+    <!-- [최적화 4] Tailwind CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- [최적화 5] Bootstrap Icons 비동기 로딩 -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" media="print" onload="this.media='all'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"></noscript>
+
+    <!-- [최적화 6] 인라인 Critical CSS - 페이지 즉시 렌더링 -->
+    <style>
+        body { font-family: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, sans-serif; background-color: #F3F4F6; margin: 0; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in-up { animation: fadeInUp 0.3s ease-out; }
+
+        /* 스켈레톤 애니메이션 */
+        @keyframes shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+        .skeleton {
+            background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s ease-in-out infinite;
+            border-radius: 8px;
+        }
+        .skeleton-card {
+            background: white;
+            border: 1px solid #f3f4f6;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+        .skeleton-line {
+            height: 14px;
+            margin-bottom: 8px;
+            border-radius: 4px;
+        }
+
+        /* 인라인 전환 애니메이션 */
+        .view-transition {
+            transition: opacity 0.15s ease-out;
+        }
+
+        @media print {
+            html, body { width: 100%; height: auto !important; overflow: visible !important; background: white !important; margin: 0 !important; padding: 0 !important; }
+            body > * { display: none !important; }
+            #modal-detail { display: block !important; position: static !important; width: 100% !important; height: auto !important; inset: auto !important; overflow: visible !important; background: white !important; border: none !important; box-shadow: none !important; z-index: auto !important; }
+            #modal-detail > div:not([data-close-modal]) { position: static !important; width: 100% !important; max-width: 100% !important; height: auto !important; max-height: none !important; overflow: visible !important; margin: 0 !important; padding: 0 !important; box-shadow: none !important; border: none !important; }
+            #modal-detail .overflow-y-auto { height: auto !important; max-height: none !important; overflow: visible !important; }
+            #modal-detail * { visibility: visible !important; }
+            [data-close-modal], #detail-actions, #loading-overlay, button, .bi-x-lg, ::-webkit-scrollbar { display: none !important; }
+        }
+    </style>
+
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
@@ -21,8 +88,6 @@
         // [중요] 배포한 Google Apps Script 웹 앱 URL
         // =========================================================================
         const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwI1IWnXCGqCDdgX-DR1e-HlXfIzysEQqHnVT5tpkVWLPMxrHikktswVc1S_GgnZXc/exec"; 
-        
-        // [변경점] 이메일 발송용 Google Apps Script URL
         const EMAIL_API_URL = "https://script.google.com/macros/s/AKfycbzNAETA0XP7rE7AEvdwm8BriRQiI07ymw1cLyrt7wAjre2t5166VgF2NH_rQ4x6-H_Y1Q/exec"; 
 
         // Firebase 설정
@@ -56,47 +121,49 @@
         let draftCache = {};
         let currentAttachments = []; 
 
-        // 페이지네이션 및 검색용 전역 변수
         let currentPage = 1;          
         const itemsPerPage = 10;      
         let allFetchedData = [];      
         let filteredDisplayData = []; 
 
-        // 결재 처리를 위한 상태 변수
         let pendingDocId = null;
         let pendingAction = null;
         
-        // [성능 개선] 로컬 스토리지 캐시 키 및 만료 시간 설정
+        // =========================================================================
+        // [최적화 핵심] 멀티 레이어 캐시 시스템
+        // =========================================================================
         const CACHE_KEYS = {
-            META: 'dy_meta_cache_v1',
-            DRAFTS: 'dy_drafts_cache_v1'
+            META: 'dy_meta_cache_v2',
+            DRAFTS: 'dy_drafts_cache_v2',
+            USER: 'dy_user_cache_v2',       // 유저 정보 캐시 추가
+            LAST_TAB: 'dy_last_tab_v2'      // 마지막 탭 기억
         };
-        const CACHE_EXPIRY = 1000 * 60 * 30; // 30분 (기본적으로 오래 유지하되 백그라운드 업데이트로 갱신)
+        const CACHE_EXPIRY_META = 1000 * 60 * 60 * 2;   // 메타: 2시간
+        const CACHE_EXPIRY_DRAFTS = 1000 * 60 * 15;     // 기안: 15분
+        const CACHE_EXPIRY_USER = 1000 * 60 * 60 * 24;  // 유저: 24시간
 
-        window.addEventListener('DOMContentLoaded', () => {
-            initApp();
-        });
-
-        // [성능 개선] 캐시 도우미 함수들
+        // =========================================================================
+        // 캐시 도우미 함수
+        // =========================================================================
         function saveToCache(key, data) {
             try {
-                const payload = {
-                    timestamp: Date.now(),
-                    data: data
-                };
-                localStorage.setItem(key, JSON.stringify(payload));
+                localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data: data }));
             } catch (e) {
-                console.warn('Cache save failed (quota exceeded?):', e);
+                console.warn('Cache save failed:', e);
+                // 용량 초과 시 오래된 캐시 정리
+                try {
+                    localStorage.removeItem(CACHE_KEYS.DRAFTS);
+                    localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data: data }));
+                } catch (e2) { /* 무시 */ }
             }
         }
 
-        function getFromCache(key) {
+        function getFromCache(key, maxAge) {
             try {
                 const raw = localStorage.getItem(key);
                 if (!raw) return null;
                 const payload = JSON.parse(raw);
-                // 만료 시간 체크 (선택적) - 여기서는 백그라운드 갱신 전략을 쓰므로 너무 오래되지 않았으면 리턴
-                if (Date.now() - payload.timestamp > CACHE_EXPIRY * 24) { // 하루 이상 지났으면 폐기
+                if (maxAge && (Date.now() - payload.timestamp > maxAge)) {
                     localStorage.removeItem(key);
                     return null;
                 }
@@ -106,75 +173,295 @@
             }
         }
 
+        // =========================================================================
+        // [최적화 핵심] 스켈레톤 UI 함수
+        // =========================================================================
+        function showSkeletonUI() {
+            const container = document.getElementById('draft-list-container');
+            if (!container) return;
+            let html = '';
+            for (let i = 0; i < 5; i++) {
+                html += `
+                <div class="skeleton-card">
+                    <div class="flex items-center gap-2 mb-3">
+                        <div class="skeleton" style="width:50px;height:20px;"></div>
+                        <div class="skeleton" style="width:120px;height:14px;"></div>
+                    </div>
+                    <div class="skeleton skeleton-line" style="width:${70 + Math.random()*25}%;height:20px;"></div>
+                    <div class="flex justify-between mt-3 pt-2" style="border-top:1px dashed #f3f4f6">
+                        <div class="skeleton" style="width:60px;height:14px;"></div>
+                        <div class="skeleton" style="width:50px;height:14px;"></div>
+                    </div>
+                </div>`;
+            }
+            container.innerHTML = html;
+        }
+
+        // =========================================================================
+        // [최적화 핵심] 초고속 초기화 - 캐시 우선 병렬 로딩
+        // =========================================================================
+        window.addEventListener('DOMContentLoaded', () => {
+            initApp();
+        });
+
         function initApp() {
+            // [최적화] 캐시된 유저 정보로 즉시 앱 화면 표시 시도
+            const cachedUser = getFromCache(CACHE_KEYS.USER, CACHE_EXPIRY_USER);
+            if (cachedUser) {
+                // 캐시된 유저로 즉시 UI 렌더링 (Firebase auth 완료 전)
+                applyUserAndShowApp(cachedUser, true);
+            }
+
             onAuthStateChanged(auth, async (user) => {
                 if (user) {
-                    // 사용자 정보 확인 중 로딩 표시
-                    showLoading('데이터를 불러오는 중입니다...');
+                    // [최적화] 메타 + 기안 데이터를 동시에 로드
+                    const hasCachedUI = !!cachedUser;
                     
-                    // [성능 개선] 메타데이터 로드 (캐시 우선 -> 백그라운드 갱신)
-                    await syncMetaData(); 
-                    
-                    const matchedUser = userList.find(u => u.email === user.email);
-                    if (matchedUser) {
-                        currentUser = { 
-                            ...user, 
-                            name: matchedUser.name, 
-                            team: matchedUser.team || '', 
-                            role: matchedUser.role || '일반', 
-                            confidentialAccess: matchedUser.confidentialAccess,
-                            approvalOnly: matchedUser.approvalOnly || false 
-                        };
-                    } else {
-                        currentUser = { ...user, name: user.displayName, team: '', role: '미등록', confidentialAccess: false, approvalOnly: false };
+                    if (!hasCachedUI) {
+                        // 캐시 없을 때만 스켈레톤 표시
+                        toggleView('app-view');
+                        showSkeletonUI();
                     }
 
-                    renderUserInfo();
-                    toggleView('app-view');
-                    hideLoading(); // 화면 먼저 보여줌
-                    
-                    if (currentUser.approvalOnly) {
-                        document.getElementById('btn-new-draft').classList.add('hidden');
-                        const myDraftBtn = document.querySelector('[data-target="myDrafts"]');
-                        if(myDraftBtn) myDraftBtn.classList.add('hidden');
-                        const toApproveBtn = document.querySelector('[data-target="toApprove"]');
-                        if(toApproveBtn) { toApproveBtn.click(); }
-                    } else {
-                        const urlParams = new URLSearchParams(window.location.search);
-                        const targetMenu = urlParams.get('menu');
-
-                        if (targetMenu === 'toApprove') {
-                            const toApproveBtn = document.querySelector('[data-target="toApprove"]');
-                            if (toApproveBtn) { toApproveBtn.click(); } 
-                            else { loadDrafts('myDrafts'); }
-                        } else {
-                            loadDrafts('myDrafts');
-                        }
-                    }
-                    
-                    if (currentUser.team === '회계팀') document.getElementById('nav-accounting').classList.remove('hidden');
-                    if (currentUser.role === '대표' || currentUser.confidentialAccess) {
-                         document.querySelectorAll('.confidential-menu').forEach(el => { el.classList.remove('hidden'); el.classList.add('flex'); });
-                    }
+                    // [핵심] 메타와 기안 데이터를 병렬로 로드
+                    await loadMetaAndDraftsParallel(user, hasCachedUI);
                     
                 } else {
                     currentUser = null;
+                    localStorage.removeItem(CACHE_KEYS.USER);
                     toggleView('login-view');
                 }
             });
 
+            // 이벤트 리스너 등록 (즉시)
+            setupEventListeners();
+        }
+
+        // [최적화 핵심] 메타 + 기안 병렬 로딩
+        async function loadMetaAndDraftsParallel(firebaseUser, hasCachedUI) {
+            // 1단계: 캐시에서 즉시 로드
+            const cachedMeta = getFromCache(CACHE_KEYS.META, CACHE_EXPIRY_META);
+            const cachedDrafts = getFromCache(CACHE_KEYS.DRAFTS, CACHE_EXPIRY_DRAFTS);
+            
+            let metaFromCache = false;
+            let draftsFromCache = false;
+
+            // 캐시된 메타가 있으면 즉시 적용
+            if (cachedMeta) {
+                userList = cachedMeta.userList || [];
+                repairMap = cachedMeta.repairMap || {};
+                metaFromCache = true;
+            }
+
+            // 유저 매칭 (캐시된 메타로 시도)
+            if (userList.length > 0) {
+                const matchedUser = userList.find(u => u.email === firebaseUser.email);
+                if (matchedUser) {
+                    currentUser = { 
+                        ...firebaseUser, 
+                        name: matchedUser.name, 
+                        team: matchedUser.team || '', 
+                        role: matchedUser.role || '일반', 
+                        confidentialAccess: matchedUser.confidentialAccess,
+                        approvalOnly: matchedUser.approvalOnly || false 
+                    };
+                } else {
+                    currentUser = { ...firebaseUser, name: firebaseUser.displayName, team: '', role: '미등록', confidentialAccess: false, approvalOnly: false };
+                }
+                // 유저 정보 캐시
+                saveToCache(CACHE_KEYS.USER, {
+                    email: currentUser.email,
+                    name: currentUser.name,
+                    displayName: firebaseUser.displayName,
+                    team: currentUser.team,
+                    role: currentUser.role,
+                    confidentialAccess: currentUser.confidentialAccess,
+                    approvalOnly: currentUser.approvalOnly
+                });
+            }
+
+            // 캐시된 기안이 있으면 즉시 렌더링
+            if (cachedDrafts && cachedDrafts.length > 0) {
+                allFetchedData = cachedDrafts;
+                draftsFromCache = true;
+            }
+
+            // UI 즉시 표시
+            if (!hasCachedUI) {
+                renderUserInfo();
+                toggleView('app-view');
+            } else {
+                renderUserInfo(); // 유저 정보 업데이트
+            }
+            applyRoleBasedUI();
+
+            // 캐시된 기안으로 즉시 렌더링
+            if (draftsFromCache) {
+                const lastTab = getInitialTab();
+                renderWithFilter(lastTab);
+            }
+
+            // 초기 탭 클릭
+            clickInitialTab();
+
+            // 2단계: [백그라운드] DB에서 최신 데이터 병렬 로드
+            const bgUpdateDelay = (metaFromCache && draftsFromCache) ? 500 : 0;
+            
+            setTimeout(() => {
+                const promises = [];
+                
+                // 메타 업데이트 (캐시 있어도 백그라운드 갱신)
+                promises.push(fetchMetaFromDB().catch(e => console.error('Meta bg update fail:', e)));
+                
+                // 기안 업데이트 (캐시 있어도 백그라운드 갱신)
+                const activeTab = getActiveTabTarget();
+                promises.push(loadDraftsFromDB(activeTab, false).catch(e => console.error('Drafts bg update fail:', e)));
+                
+                Promise.all(promises).then(() => {
+                    console.log('[BG] 백그라운드 데이터 갱신 완료');
+                });
+            }, bgUpdateDelay);
+
+            // 캐시가 하나도 없었으면 DB에서 직접 로드
+            if (!metaFromCache) {
+                await fetchMetaFromDB();
+                // 유저 재매칭
+                const matchedUser = userList.find(u => u.email === firebaseUser.email);
+                if (matchedUser) {
+                    currentUser = { 
+                        ...firebaseUser, 
+                        name: matchedUser.name, 
+                        team: matchedUser.team || '', 
+                        role: matchedUser.role || '일반', 
+                        confidentialAccess: matchedUser.confidentialAccess,
+                        approvalOnly: matchedUser.approvalOnly || false 
+                    };
+                    saveToCache(CACHE_KEYS.USER, {
+                        email: currentUser.email,
+                        name: currentUser.name,
+                        displayName: firebaseUser.displayName,
+                        team: currentUser.team,
+                        role: currentUser.role,
+                        confidentialAccess: currentUser.confidentialAccess,
+                        approvalOnly: currentUser.approvalOnly
+                    });
+                } else {
+                    currentUser = { ...firebaseUser, name: firebaseUser.displayName, team: '', role: '미등록', confidentialAccess: false, approvalOnly: false };
+                }
+                renderUserInfo();
+                applyRoleBasedUI();
+            }
+
+            if (!draftsFromCache) {
+                const activeTab = getActiveTabTarget();
+                await loadDraftsFromDB(activeTab, true);
+            }
+
+            hideLoading();
+        }
+
+        // 캐시된 유저 정보로 즉시 앱 표시
+        function applyUserAndShowApp(cached, isFromCache) {
+            currentUser = {
+                email: cached.email,
+                name: cached.name,
+                displayName: cached.displayName,
+                team: cached.team,
+                role: cached.role,
+                confidentialAccess: cached.confidentialAccess,
+                approvalOnly: cached.approvalOnly
+            };
+            
+            // 캐시된 메타도 로드
+            const cachedMeta = getFromCache(CACHE_KEYS.META, CACHE_EXPIRY_META);
+            if (cachedMeta) {
+                userList = cachedMeta.userList || [];
+                repairMap = cachedMeta.repairMap || {};
+            }
+
+            // 캐시된 기안도 로드 & 즉시 표시
+            const cachedDrafts = getFromCache(CACHE_KEYS.DRAFTS, CACHE_EXPIRY_DRAFTS);
+            if (cachedDrafts && cachedDrafts.length > 0) {
+                allFetchedData = cachedDrafts;
+            }
+
+            renderUserInfo();
+            toggleView('app-view');
+            applyRoleBasedUI();
+
+            if (allFetchedData.length > 0) {
+                const lastTab = getInitialTab();
+                renderWithFilter(lastTab);
+                clickInitialTab();
+            } else {
+                showSkeletonUI();
+                clickInitialTab();
+            }
+        }
+
+        function applyRoleBasedUI() {
+            if (!currentUser) return;
+            if (currentUser.approvalOnly) {
+                document.getElementById('btn-new-draft').classList.add('hidden');
+                const myDraftBtn = document.querySelector('[data-target="myDrafts"]');
+                if(myDraftBtn) myDraftBtn.classList.add('hidden');
+            } else {
+                document.getElementById('btn-new-draft').classList.remove('hidden');
+                const myDraftBtn = document.querySelector('[data-target="myDrafts"]');
+                if(myDraftBtn) myDraftBtn.classList.remove('hidden');
+            }
+            if (currentUser.team === '회계팀') document.getElementById('nav-accounting').classList.remove('hidden');
+            if (currentUser.role === '대표' || currentUser.confidentialAccess) {
+                document.querySelectorAll('.confidential-menu').forEach(el => { el.classList.remove('hidden'); el.classList.add('flex'); });
+            }
+        }
+
+        function getInitialTab() {
+            if (currentUser && currentUser.approvalOnly) return 'toApprove';
+            const urlParams = new URLSearchParams(window.location.search);
+            const targetMenu = urlParams.get('menu');
+            if (targetMenu === 'toApprove') return 'toApprove';
+            const lastTab = localStorage.getItem(CACHE_KEYS.LAST_TAB);
+            return lastTab || 'myDrafts';
+        }
+
+        function clickInitialTab() {
+            const tab = getInitialTab();
+            const btn = document.querySelector(`[data-target="${tab}"]`);
+            if (btn) {
+                document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active', 'bg-blue-50', 'text-blue-600'));
+                btn.classList.add('active', 'bg-blue-50', 'text-blue-600');
+                document.getElementById('page-title').textContent = getTitleByListType(tab);
+            }
+        }
+
+        function getActiveTabTarget() {
+            const activeEl = document.querySelector('.nav-item.active');
+            return activeEl ? activeEl.dataset.target : 'myDrafts';
+        }
+
+        // =========================================================================
+        // 이벤트 리스너 통합 등록
+        // =========================================================================
+        function setupEventListeners() {
             document.getElementById('btn-login').addEventListener('click', () => signInWithPopup(auth, provider));
-            document.getElementById('btn-logout').addEventListener('click', () => signOut(auth));
+            document.getElementById('btn-logout').addEventListener('click', () => {
+                localStorage.removeItem(CACHE_KEYS.USER);
+                signOut(auth);
+            });
             document.getElementById('btn-new-draft').addEventListener('click', openNewDraftModal);
             
             document.getElementById('btn-refresh').addEventListener('click', () => {
                 showToast('최신 데이터를 가져옵니다.');
-                const activeTab = document.querySelector('.nav-item.active').dataset.target;
-                loadDrafts(activeTab, true); // 강제 업데이트
+                const activeTab = getActiveTabTarget();
+                loadDrafts(activeTab, true);
             });
 
+            // [최적화] 검색 디바운스 적용
+            let searchTimeout;
             document.getElementById('search-input').addEventListener('keyup', (e) => {
-                runSearch(e.target.value);
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => runSearch(e.target.value), 150);
             });
             
             const sidebar = document.getElementById('main-sidebar');
@@ -196,7 +483,8 @@
                     document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active', 'bg-blue-50', 'text-blue-600'));
                     e.currentTarget.classList.add('active', 'bg-blue-50', 'text-blue-600');
                     const target = e.currentTarget.dataset.target;
-                    loadDrafts(target); // 탭 전환 시에는 캐시된 메모리 데이터 사용
+                    localStorage.setItem(CACHE_KEYS.LAST_TAB, target);
+                    loadDrafts(target);
                     
                     if (window.innerWidth < 768) {
                         window.toggleSidebar();
@@ -211,11 +499,11 @@
             document.getElementById('btn-save-draft').addEventListener('click', saveDraft);
         }
 
+        // =========================================================================
+        // Google Sheet 동기화 & 이메일 발송 (비동기, fire-and-forget)
+        // =========================================================================
         async function syncToGoogleSheet(draftData) {
-            if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes("여기에")) {
-                console.warn("Google Apps Script URL이 설정되지 않았습니다.");
-                return;
-            }
+            if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes("여기에")) return;
             try {
                 await fetch(APPS_SCRIPT_URL, {
                     method: 'POST',
@@ -223,152 +511,106 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(draftData)
                 });
-                console.log(`[Google Sheet Sync] ${draftData.docId} 전송 완료`);
             } catch (error) {
                 console.error('[Google Sheet Sync] 전송 실패:', error);
-                showToast('구글 시트 연동 실패 (콘솔 확인)', true);
+                showToast('구글 시트 연동 실패', true);
             }
         }
 
         async function sendEmailNotification(type, draftData) {
-            if (!EMAIL_API_URL || EMAIL_API_URL.includes("여기에")) {
-                console.warn("이메일 API URL이 설정되지 않았습니다.");
-                return;
-            }
+            if (!EMAIL_API_URL || EMAIL_API_URL.includes("여기에")) return;
             try {
                 await fetch(EMAIL_API_URL, {
                     method: 'POST',
                     mode: 'no-cors', 
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        type: type, 
-                        draft: draftData
-                    })
+                    body: JSON.stringify({ type: type, draft: draftData })
                 });
-                console.log('[Email Sent] 요청 완료');
             } catch (error) {
-                console.error('[Email Failed] 전송 실패:', error);
+                console.error('[Email Failed]:', error);
             }
         }
 
-        // [성능 개선] 메타데이터 로드 함수 (캐시 적용)
-        async function syncMetaData() {
-            // 1. 캐시 확인 및 즉시 적용
-            const cachedMeta = getFromCache(CACHE_KEYS.META);
-            if (cachedMeta) {
-                console.log("Using cached metadata");
-                userList = cachedMeta.userList || [];
-                repairMap = cachedMeta.repairMap || {};
-                // UI 업데이트는 DOM 로드 후에 수행되므로 변수만 세팅해둠
-                // 백그라운드 업데이트 예약
-                setTimeout(fetchMetaFromDB, 2000); 
-            } else {
-                // 캐시 없으면 바로 DB 조회
-                await fetchMetaFromDB();
-            }
-        }
-
-        // [성능 개선] 실제 DB에서 메타데이터 가져오는 함수
+        // =========================================================================
+        // 메타데이터 DB 로드
+        // =========================================================================
         async function fetchMetaFromDB() {
             try {
-                console.log("Fetching metadata from DB...");
-                // 병렬 처리로 속도 향상
                 const [usersDoc, repairDoc] = await Promise.all([
                     getDoc(doc(db, 'meta', 'users')),
                     getDoc(doc(db, 'meta', 'repairMap'))
                 ]);
 
-                if (usersDoc.exists()) { 
-                    userList = usersDoc.data().list || []; 
-                }
-                if (repairDoc.exists()) { 
-                    repairMap = repairDoc.data().map || {}; 
-                }
+                if (usersDoc.exists()) userList = usersDoc.data().list || [];
+                if (repairDoc.exists()) repairMap = repairDoc.data().map || {};
 
                 updateApproverList(); 
                 updateRefDeptList();
-                
-                // 최신 데이터 캐싱
                 saveToCache(CACHE_KEYS.META, { userList, repairMap });
-            } catch (error) { console.error("Meta fetch error:", error); }
+            } catch (error) { 
+                console.error("Meta fetch error:", error); 
+            }
         }
 
         function updateRefDeptList() {
             const select = document.getElementById('input-ref');
             if(!select) return;
-
             const teams = [...new Set(userList.map(u => u.team).filter(t => t && t.trim() !== ''))].sort();
-
             let html = '<option value="">선택 안함</option>';
-            teams.forEach(team => {
-                html += `<option value="${team}">${team}</option>`;
-            });
+            teams.forEach(team => { html += `<option value="${team}">${team}</option>`; });
             html += '<option value="전체">전체</option>';
-
             select.innerHTML = html;
         }
 
-        // [성능 개선] 기안 목록 로드 함수 (캐시 적용)
+        // =========================================================================
+        // 기안 목록 로드 (캐시 우선)
+        // =========================================================================
         async function loadDrafts(listType, forceUpdate = false) {
-            const listContainer = document.getElementById('draft-list-container');
             document.getElementById('page-title').textContent = getTitleByListType(listType);
             document.getElementById('search-input').value = '';
 
-            // 1. 강제 업데이트가 아니면 캐시부터 확인
             if (!forceUpdate) {
-                if (allFetchedData.length === 0) {
-                    const cachedDrafts = getFromCache(CACHE_KEYS.DRAFTS);
-                    if (cachedDrafts && cachedDrafts.length > 0) {
-                        console.log("Using cached drafts:", cachedDrafts.length);
-                        allFetchedData = cachedDrafts;
-                        renderWithFilter(listType); // 캐시 데이터로 즉시 렌더링
-                        
-                        // 백그라운드에서 최신 데이터 가져와서 업데이트 (사용자 경험 저해 없음)
-                        setTimeout(() => loadDraftsFromDB(listType, false), 1000); 
-                        return;
-                    }
-                } else {
-                    // 이미 메모리에 데이터가 있으면 그냥 렌더링
+                if (allFetchedData.length > 0) {
                     renderWithFilter(listType);
+                    return;
+                }
+                const cachedDrafts = getFromCache(CACHE_KEYS.DRAFTS, CACHE_EXPIRY_DRAFTS);
+                if (cachedDrafts && cachedDrafts.length > 0) {
+                    allFetchedData = cachedDrafts;
+                    renderWithFilter(listType);
+                    setTimeout(() => loadDraftsFromDB(listType, false), 1000);
                     return;
                 }
             }
 
-            // 2. 캐시가 없거나 강제 업데이트인 경우
             await loadDraftsFromDB(listType, true);
         }
 
-        // [성능 개선] DB에서 기안 목록 가져오기
         async function loadDraftsFromDB(listType, showSpinner = false) {
             const listContainer = document.getElementById('draft-list-container');
             
-            if (showSpinner) {
-                listContainer.innerHTML = '<div class="flex justify-center p-10"><div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div></div>';
+            if (showSpinner && allFetchedData.length === 0) {
+                showSkeletonUI();
             }
 
             try {
-                console.log("Fetching drafts from DB...");
-                // 500개 제한
                 const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(500));
                 const querySnapshot = await getDocs(q);
                 let drafts = [];
-                querySnapshot.forEach((doc) => { drafts.push({ id: doc.id, ...doc.data() }); });
+                querySnapshot.forEach((docSnap) => { drafts.push({ id: docSnap.id, ...docSnap.data() }); });
                 
                 allFetchedData = drafts; 
-                saveToCache(CACHE_KEYS.DRAFTS, allFetchedData); // 캐시 업데이트
-                
-                renderWithFilter(listType);
-                console.log("DB Load complete & Cached.");
+                saveToCache(CACHE_KEYS.DRAFTS, allFetchedData);
+                renderWithFilter(listType || getActiveTabTarget());
 
             } catch (error) {
                 console.error(error);
-                if (showSpinner) {
+                if (showSpinner && allFetchedData.length === 0) {
                     listContainer.innerHTML = `<div class="text-center p-10 text-gray-500">데이터 로드 실패<br>${error.message}</div>`;
                 }
             }
         }
 
-        // [성능 개선] 필터링 및 렌더링 분리
         function renderWithFilter(listType) {
             filteredDisplayData = allFetchedData.filter(draft => filterDraft(draft, listType));
             currentPage = 1;
@@ -377,7 +619,7 @@
 
         function runSearch(keyword) {
             const term = keyword.toLowerCase().trim();
-            const activeTab = document.querySelector('.nav-item.active').dataset.target;
+            const activeTab = getActiveTabTarget();
             
             if (!term) {
                 filteredDisplayData = allFetchedData.filter(draft => filterDraft(draft, activeTab));
@@ -391,14 +633,14 @@
                     return matchesFilter && matchesKeyword;
                 });
             }
-            // 검색 시에는 페이지 1로 리셋
-            // currentPage = 1; -> runSearch 호출 전에 이미 초기화하는 경우가 많아 여기서는 생략하거나 필요시 추가
             renderPaginatedItems();
         }
 
+        // =========================================================================
+        // [최적화] 렌더링 성능 개선 - DocumentFragment 사용
+        // =========================================================================
         function renderPaginatedItems() {
             const container = document.getElementById('draft-list-container');
-            container.innerHTML = ''; 
 
             if (filteredDisplayData.length === 0) {
                 container.innerHTML = `<div class="text-center p-10 text-gray-400">문서가 없습니다.</div>`;
@@ -409,6 +651,9 @@
             const startIndex = (currentPage - 1) * itemsPerPage;
             const endIndex = startIndex + itemsPerPage;
             const pageItems = filteredDisplayData.slice(startIndex, endIndex);
+
+            // [최적화] DocumentFragment로 한번에 DOM 삽입
+            const fragment = document.createDocumentFragment();
 
             pageItems.forEach(draft => {
                 draftCache[draft.docId] = draft; 
@@ -455,9 +700,11 @@
                         <span>${draft.date.substring(5)}</span>
                     </div>
                 `;
-                container.appendChild(card);
+                fragment.appendChild(card);
             });
 
+            container.innerHTML = '';
+            container.appendChild(fragment);
             renderPaginationControls();
         }
 
@@ -479,10 +726,7 @@
 
             let startPage = Math.max(1, currentPage - 2);
             let endPage = Math.min(totalPages, startPage + 4);
-            
-            if (endPage - startPage < 4) {
-                startPage = Math.max(1, endPage - 4);
-            }
+            if (endPage - startPage < 4) startPage = Math.max(1, endPage - 4);
 
             for (let i = startPage; i <= endPage; i++) {
                 const btn = document.createElement('button');
@@ -508,18 +752,18 @@
 
         function filterDraft(draft, listType) {
             const isConfidential = draft.category === '대외비';
-            const canViewConfidential = currentUser.role === '대표' || currentUser.confidentialAccess;
+            const canViewConfidential = currentUser && (currentUser.role === '대표' || currentUser.confidentialAccess);
             
-            const isAccountingTarget = (currentUser.team === '회계팀') && 
+            const isAccountingTarget = currentUser && (currentUser.team === '회계팀') && 
                                        (!isConfidential || canViewConfidential) &&
                                        ['경비', '직영수리비'].includes(draft.category) &&
                                        draft.approval2Status === '결재' &&
                                        !draft.paymentDate;
 
             switch (listType) {
-                case 'myDrafts': return draft.drafterEmail === currentUser.email;
-                case 'toApprove': return !isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
-                case 'toApproveConfidential': if (!canViewConfidential) return false; return isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
+                case 'myDrafts': return currentUser && draft.drafterEmail === currentUser.email;
+                case 'toApprove': return currentUser && !isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
+                case 'toApproveConfidential': if (!canViewConfidential) return false; return currentUser && isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
                 case 'allDrafts': return !isConfidential;
                 case 'allConfidentialDrafts': return canViewConfidential && isConfidential;
                 case 'acc-paju': return isAccountingTarget && draft.corporation === '동영(파주)';
@@ -530,6 +774,9 @@
             }
         }
 
+        // =========================================================================
+        // 기안 저장
+        // =========================================================================
         async function saveDraft() {
             const form = document.getElementById('draft-form');
             if (!form.checkValidity()) { form.reportValidity(); return; }
@@ -601,16 +848,12 @@
                 else await updateDoc(doc(db, "drafts", newDocId), draftData);
                 
                 syncToGoogleSheet(draftData);
-
-                if (isNew) {
-                    sendEmailNotification('NEW', draftData);
-                }
+                if (isNew) sendEmailNotification('NEW', draftData);
 
                 closeModal('modal-draft'); 
                 showToast(isNew ? (isJeonGyeol ? '등록 완료 (1차 전결)' : '등록 완료') : '수정 완료');
                 
-                // 저장 후 강제 갱신
-                const activeTab = document.querySelector('.nav-item.active').dataset.target;
+                const activeTab = getActiveTabTarget();
                 loadDrafts(activeTab, true);
 
             } catch (error) { 
@@ -635,6 +878,9 @@
             });
         }
 
+        // =========================================================================
+        // 결재 처리
+        // =========================================================================
         window.processApproval = (docId, action) => {
             pendingDocId = docId;
             pendingAction = action;
@@ -691,9 +937,11 @@
                 const status = action === 'approve' ? '결재' : '반려';
                 
                 if (draft.approver1Email === currentUser.email && !draft.approval1Status) {
-                    updateData.approval1Status = status; updateData.approval1Comment = comment;
+                    updateData.approval1Status = status; 
+                    updateData.approval1Comment = comment;
                 } else if (draft.approver2Email === currentUser.email && draft.approval1Status === '결재') {
-                    updateData.approval2Status = status; updateData.approval2Comment = comment;
+                    updateData.approval2Status = status; 
+                    updateData.approval2Comment = comment;
                     if (status === '결재') updateData.finalApprovalDate = new Date().toISOString();
                 } else {
                      throw new Error('권한 없음');
@@ -717,8 +965,7 @@
                 closeCommentModal();
                 closeModal('modal-detail'); 
                 showToast('처리 완료');
-                // 처리 후 강제 갱신
-                loadDrafts(document.querySelector('.nav-item.active').dataset.target, true);
+                loadDrafts(getActiveTabTarget(), true);
             } catch (e) { 
                 alert('오류: ' + e.message); 
             } finally { 
@@ -745,13 +992,19 @@
                 syncToGoogleSheet(fullSyncedData);
                 alert('저장 완료'); 
                 closeModal('modal-detail'); 
-                loadDrafts(document.querySelector('.nav-item.active').dataset.target, true);
+                loadDrafts(getActiveTabTarget(), true);
             } catch(e) { alert(e.message); }
         }
 
+        // =========================================================================
+        // UI 유틸리티 함수
+        // =========================================================================
         function renderUserInfo() {
-            document.getElementById('user-profile-name').textContent = `${currentUser.name} (${currentUser.role})`;
-            document.getElementById('user-profile-email').textContent = currentUser.email;
+            if (!currentUser) return;
+            const nameEl = document.getElementById('user-profile-name');
+            const emailEl = document.getElementById('user-profile-email');
+            if (nameEl) nameEl.textContent = `${currentUser.name} (${currentUser.role})`;
+            if (emailEl) emailEl.textContent = currentUser.email;
         }
 
         function toggleView(viewId) {
@@ -803,12 +1056,8 @@
 
             document.getElementById('detail-info').innerHTML = `
                 <div class="flex flex-wrap items-center gap-2 mb-2">
-                    <span class="px-2 py-1 rounded text-xs font-bold bg-blue-50 text-blue-700 border border-blue-100">
-                        ${draft.category}
-                    </span>
-                    <span class="px-2 py-1 rounded text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">
-                        ${draft.corporation}
-                    </span>
+                    <span class="px-2 py-1 rounded text-xs font-bold bg-blue-50 text-blue-700 border border-blue-100">${draft.category}</span>
+                    <span class="px-2 py-1 rounded text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">${draft.corporation}</span>
                 </div>
                 ${paymentInfo}
                 <div class="mt-2 text-xs text-gray-500 flex items-center gap-2 w-full pt-2 border-t border-dashed">
@@ -822,12 +1071,10 @@
             
             const linksContainer = document.getElementById('detail-links');
             linksContainer.innerHTML = '';
-            
             if (draft.refLinks) {
                 draft.refLinks.forEach(link => {
                     const url = link.url || link; 
                     const title = link.title || url;
-                    
                     linksContainer.innerHTML += `
                         <a href="${url}" target="_blank" class="flex items-center gap-2 bg-blue-50 hover:bg-blue-100 border border-blue-100 text-blue-700 px-3 py-2 rounded-lg mb-2 transition group">
                             <i class="bi bi-link-45deg text-lg group-hover:scale-110 transition-transform"></i>
@@ -903,7 +1150,6 @@
                 draft.refLinks.forEach(link => {
                      const titleVal = link.title || '';
                      const urlVal = link.url || link;
-                     
                      linkWrapper.insertAdjacentHTML('beforeend', `
                         <div class="flex gap-2 mb-2 ref-link-row items-center">
                             <input type="text" value="${titleVal}" placeholder="링크 제목" class="w-1/3 rounded-lg border-gray-300 border p-2.5 text-sm">
@@ -920,9 +1166,7 @@
         function renderCurrentAttachments() {
             const container = document.getElementById('existing-files-area');
             if (!container) return;
-            
             container.innerHTML = '';
-            
             currentAttachments.forEach((file, index) => {
                 const item = document.createElement('div');
                 item.className = 'flex items-center justify-between bg-blue-50 border border-blue-100 rounded px-3 py-2 mb-2 text-sm text-blue-800';
@@ -979,10 +1223,8 @@
         
         function updateApproverList() { 
             const userOptions = userList.map(u => `<option value="${u.email}">${u.name} (${u.team})</option>`).join('');
-            
             const list1 = document.getElementById('approvers-datalist');
             if (list1) list1.innerHTML = `<option value="전결">1차 전결 (바로 2차 결재로 이동)</option>` + userOptions; 
-            
             const list2 = document.getElementById('approvers-datalist-2');
             if (list2) list2.innerHTML = userOptions;
         }
@@ -1008,84 +1250,12 @@
                 const inputs = row.querySelectorAll('input');
                 const title = inputs[0].value.trim();
                 const url = inputs[1].value.trim();
-                if(url) { 
-                    links.push({ title: title || url, url: url }); 
-                } 
+                if(url) { links.push({ title: title || url, url: url }); } 
             }); 
             return links; 
         }
 
     </script>
-
-    <style>
-        body { font-family: 'Noto Sans KR', sans-serif; background-color: #F3F4F6; }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #f1f1f1; }
-        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-        
-        @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-fade-in-up { animation: fadeInUp 0.3s ease-out; }
-
-        @media print {
-            html, body {
-                width: 100%;
-                height: auto !important;
-                overflow: visible !important;
-                background: white !important;
-                margin: 0 !important;
-                padding: 0 !important;
-            }
-
-            body > * {
-                display: none !important;
-            }
-
-            #modal-detail {
-                display: block !important;
-                position: static !important; 
-                width: 100% !important;
-                height: auto !important;
-                inset: auto !important;
-                overflow: visible !important; 
-                background: white !important;
-                border: none !important;
-                box-shadow: none !important;
-                z-index: auto !important;
-            }
-
-            #modal-detail > div:not([data-close-modal]) {
-                position: static !important;
-                width: 100% !important;
-                max-width: 100% !important;
-                height: auto !important;
-                max-height: none !important; 
-                overflow: visible !important; 
-                margin: 0 !important;
-                padding: 0 !important;
-                box-shadow: none !important;
-                border: none !important;
-            }
-
-            #modal-detail .overflow-y-auto {
-                height: auto !important;
-                max-height: none !important;
-                overflow: visible !important;
-            }
-
-            #modal-detail * {
-                visibility: visible !important;
-            }
-
-            [data-close-modal],        
-            #detail-actions,           
-            #loading-overlay,          
-            button,                    
-            .bi-x-lg,                 
-            ::-webkit-scrollbar {      
-                display: none !important;
-            }
-        }
-    </style>
 </head>
 <body>
 
@@ -1099,13 +1269,11 @@
             <div class="mb-10">
                 <div class="flex justify-center mb-6">
                     <img src="https://docs.google.com/drawings/d/e/2PACX-1vQC6X9H3jTLB8IurxAun_V99Sp9rDO0pwSgCb3HoIclg5LSgs3Xv_AKYbRqMt5crNIdvbhotXpN8I9M/pub?w=302&h=113" 
-                         alt="DY 로고" class="h-14 w-auto object-contain">
+                         alt="DY 로고" class="h-14 w-auto object-contain" loading="lazy">
                 </div>
-                
                 <h1 class="text-2xl font-bold text-slate-800 mb-1 tracking-tight">DY 의사결정시스템</h1>
                 <p class="text-slate-400 text-xs font-medium uppercase tracking-wider">Decision Making System</p>
             </div>
-            
             <button id="btn-login" class="w-full bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-medium py-3.5 px-4 rounded-xl shadow-sm transition flex items-center justify-center gap-3 text-sm group">
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-5 h-5 group-hover:scale-110 transition-transform">
                 Google 계정으로 시작하기
@@ -1121,9 +1289,8 @@
             
             <div class="p-6 border-b border-gray-100 flex flex-col justify-center h-24">
                 <img src="https://docs.google.com/drawings/d/e/2PACX-1vQC6X9H3jTLB8IurxAun_V99Sp9rDO0pwSgCb3HoIclg5LSgs3Xv_AKYbRqMt5crNIdvbhotXpN8I9M/pub?w=302&h=113" 
-                         alt="DY" class="h-8 w-auto object-contain self-start mb-2">
+                         alt="DY" class="h-8 w-auto object-contain self-start mb-2" loading="lazy">
                 <div class="text-sm font-bold text-slate-700 tracking-tight">DY 의사결정시스템</div>
-                
                 <button class="md:hidden absolute top-6 right-6 text-gray-400" onclick="toggleSidebar()"><i class="bi bi-x-lg"></i></button>
             </div>
             
@@ -1174,7 +1341,7 @@
                     </div>
                     <div class="overflow-hidden">
                         <div id="user-profile-name" class="font-bold text-sm text-gray-800 truncate">사용자</div>
-                        <div id="user-profile-email" class="text-xs text-gray-500 truncate">user@email.com</div>
+                        <div id="user-profile-email" class="text-xs text-gray-500 truncate">loading...</div>
                     </div>
                 </div>
                 <button id="btn-logout" class="w-full text-xs text-center text-gray-500 hover:text-red-500 py-1 transition-colors">로그아웃</button>
@@ -1200,44 +1367,38 @@
                 </div>
             </header>
 
-            <div class="px-4 md:px-8 pt-4 pb-2">
-                <div class="relative">
-                    <input type="text" id="search-input" placeholder="제목, 기안자, 문서번호 검색..." 
-                        class="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors bg-white shadow-sm text-sm">
-                    <i class="bi bi-search absolute left-3.5 top-2.5 text-gray-400"></i>
+            <div class="p-4 md:p-8 flex-1 overflow-y-auto">
+                <div class="relative mb-4 md:mb-6">
+                    <i class="bi bi-search absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                    <input id="search-input" type="text" class="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 shadow-sm focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm bg-white" placeholder="제목, 기안자, 문서번호 검색...">
                 </div>
-            </div>
 
-            <div id="draft-list-container" class="flex-1 overflow-y-auto p-4 md:p-8 pb-20">
-            </div>
+                <div id="draft-list-container">
+                    <!-- 스켈레톤 또는 목록이 여기에 렌더링됨 -->
+                </div>
 
-            <div id="pagination-container" class="bg-white border-t border-gray-200 p-3 flex justify-center items-center gap-2 sticky bottom-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+                <div id="pagination-container" class="flex items-center justify-center gap-2 py-4 relative"></div>
             </div>
         </main>
     </div>
 
-    <div id="modal-draft" class="fixed inset-0 z-50 hidden flex items-center justify-center">
-        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity" data-close-modal="modal-draft"></div>
-        
-        <div class="relative w-full max-w-4xl mx-4 bg-white rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
-            
-            <div class="p-5 md:p-6 border-b flex justify-between items-center bg-gray-50 shrink-0">
-                <h3 id="draft-modal-title" class="text-xl font-bold text-gray-800">새 기안 작성</h3>
-                <button class="text-gray-400 hover:text-gray-600 transition-colors" data-close-modal="modal-draft">
-                    <i class="bi bi-x-lg text-xl"></i>
-                </button>
+    <!-- 기안 작성/수정 모달 -->
+    <div id="modal-draft" class="fixed inset-0 z-50 hidden">
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" data-close-modal="modal-draft"></div>
+        <div class="absolute inset-0 m-auto max-w-3xl max-h-[95vh] w-[95%] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-fade-in-up">
+            <div class="p-5 md:p-6 border-b flex justify-between items-center bg-gradient-to-r from-blue-600 to-blue-700 shrink-0">
+                <h3 id="draft-modal-title" class="text-lg md:text-xl font-bold text-white">새 기안 작성</h3>
+                <button class="text-white/80 hover:text-white" data-close-modal="modal-draft"><i class="bi bi-x-lg text-2xl"></i></button>
             </div>
-            
-            <div class="flex-1 overflow-y-auto p-5 md:p-8 space-y-6">
-                <form id="draft-form" onsubmit="return false;">
+            <div class="flex-1 overflow-y-auto p-5 md:p-8">
+                <form id="draft-form">
                     <input type="hidden" id="input-doc-id">
-                    
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
                             <label class="block text-sm font-bold text-gray-700 mb-2">구분</label>
                             <select id="input-category" class="w-full rounded-lg border-gray-300 border p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white" required>
                                 <option value="" disabled selected>선택하세요</option>
-                                <option>경비</option><option>보고</option><option>인사</option><option>직영수리비</option><option>기타</option><option class="text-red-500 font-bold">대외비</option>
+                                <option>경비</option><option>직영수리비</option><option>인사</option><option>업무</option><option>대외비</option>
                             </select>
                         </div>
                         <div>
@@ -1304,6 +1465,7 @@
         </div>
     </div>
 
+    <!-- 상세 보기 모달 -->
     <div id="modal-detail" class="fixed inset-0 z-50 hidden">
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" data-close-modal="modal-detail"></div>
         <div class="absolute inset-0 m-auto max-w-4xl max-h-[90vh] w-[95%] bg-white rounded-xl shadow-2xl flex flex-col overflow-hidden">
@@ -1351,6 +1513,7 @@
         </div>
     </div>
 
+    <!-- 결재 의견 모달 -->
     <div id="modal-comment" class="fixed inset-0 z-[60] hidden flex items-center justify-center">
         <div class="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity" onclick="closeCommentModal()"></div>
         
@@ -1373,7 +1536,7 @@
 
             <div class="p-4 border-t bg-gray-50 flex justify-end gap-2">
                 <button onclick="closeCommentModal()" class="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 text-sm font-medium">취소</button>
-                <button id="btn-submit-comment" onclick="submitApprovalComment()" class="px-5 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-sm font-bold shadow-md">확인</button>
+                <button id="btn-submit-comment" onclick="submitApprovalComment()" class="px-5 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-sm font-bold shadow-md">승인하기</button>
             </div>
         </div>
     </div>
