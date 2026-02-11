@@ -7,7 +7,6 @@
     
     <link rel="icon" type="image/png" href="https://docs.google.com/drawings/d/e/2PACX-1vTLDR3vD1FC_E0CxZDT3LYEJY3zqlvw1jtB_q1QUrAZX6RvdgUW3sOOaB70yNk_4AQs_7hKdovb4qTf/pub?w=128&h=128">
 
-    <!-- [최적화 1] preconnect로 DNS/TLS 미리 연결 -->
     <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
     <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
@@ -15,21 +14,16 @@
     <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 
-    <!-- [최적화 2] DNS prefetch 추가 -->
     <link rel="dns-prefetch" href="https://firebaseinstallations.googleapis.com">
     <link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
 
-    <!-- [최적화 3] 폰트를 swap으로 로딩하여 FOIT 방지 -->
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
     
-    <!-- [최적화 4] Tailwind CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- [최적화 5] Bootstrap Icons 비동기 로딩 -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" media="print" onload="this.media='all'">
     <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"></noscript>
 
-    <!-- [최적화 6] 인라인 Critical CSS - 페이지 즉시 렌더링 -->
     <style>
         body { font-family: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, sans-serif; background-color: #F3F4F6; margin: 0; }
         ::-webkit-scrollbar { width: 6px; }
@@ -1374,15 +1368,13 @@
                 </div>
 
                 <div id="draft-list-container">
-                    <!-- 스켈레톤 또는 목록이 여기에 렌더링됨 -->
-                </div>
+                    </div>
 
                 <div id="pagination-container" class="flex items-center justify-center gap-2 py-4 relative"></div>
             </div>
         </main>
     </div>
 
-    <!-- 기안 작성/수정 모달 -->
     <div id="modal-draft" class="fixed inset-0 z-50 hidden">
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" data-close-modal="modal-draft"></div>
         <div class="absolute inset-0 m-auto max-w-3xl max-h-[95vh] w-[95%] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-fade-in-up">
@@ -1398,7 +1390,12 @@
                             <label class="block text-sm font-bold text-gray-700 mb-2">구분</label>
                             <select id="input-category" class="w-full rounded-lg border-gray-300 border p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white" required>
                                 <option value="" disabled selected>선택하세요</option>
-                                <option>경비</option><option>직영수리비</option><option>인사</option><option>업무</option><option>대외비</option>
+                                <option style="color: #ea580c; font-weight: 600;">경비</option>
+                                <option>직영수리비</option>
+                                <option>인사</option>
+                                <option>업무</option>
+                                <option style="color: #2563eb; font-weight: 600;">보고</option>
+                                <option style="color: #dc2626; font-weight: bold;">대외비</option>
                             </select>
                         </div>
                         <div>
@@ -1465,7 +1462,6 @@
         </div>
     </div>
 
-    <!-- 상세 보기 모달 -->
     <div id="modal-detail" class="fixed inset-0 z-50 hidden">
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" data-close-modal="modal-detail"></div>
         <div class="absolute inset-0 m-auto max-w-4xl max-h-[90vh] w-[95%] bg-white rounded-xl shadow-2xl flex flex-col overflow-hidden">
@@ -1513,7 +1509,6 @@
         </div>
     </div>
 
-    <!-- 결재 의견 모달 -->
     <div id="modal-comment" class="fixed inset-0 z-[60] hidden flex items-center justify-center">
         <div class="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity" onclick="closeCommentModal()"></div>
         
