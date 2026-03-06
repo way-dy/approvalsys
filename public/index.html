@@ -1116,7 +1116,9 @@
             paymentArea.classList.add('hidden');
             if (currentUser.team === '회계팀' && ['경비', '직영수리비'].includes(draft.category) && draft.approval2Status === '결재' && !draft.paymentDate) {
                 paymentArea.classList.remove('hidden');
-                let infoMsg = draft.category === '직영수리비' ? (repairMap[draft.docId] ? `<div class="text-blue-600 text-xs font-bold mb-2">수리비: ${repairMap[draft.docId]}</div>` : `<div class="text-red-500 text-xs font-bold mb-2">수리비 없음</div>`) : '';
+                const repairRaw = repairMap[draft.docId];
+                const repairFormatted = repairRaw ? Number(repairRaw).toLocaleString('ko-KR') + '원' : null;
+                let infoMsg = draft.category === '직영수리비' ? (repairFormatted ? `<div class="text-blue-600 text-xs font-bold mb-2">수리비: ${repairFormatted}</div>` : `<div class="text-red-500 text-xs font-bold mb-2">수리비 없음</div>`) : '';
                 document.getElementById('repair-cost-display').innerHTML = infoMsg;
             }
             modal.classList.remove('hidden');
