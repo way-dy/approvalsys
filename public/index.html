@@ -75,7 +75,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-        import { getFirestore, collection, doc, getDoc, getDocs, getDocsFromServer, setDoc, updateDoc, query, where, orderBy, runTransaction, serverTimestamp, limit, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, getDoc, getDocs, getDocsFromServer, setDoc, updateDoc, query, where, orderBy, runTransaction, serverTimestamp, limit } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
         import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js";
 
         // =========================================================================
@@ -99,15 +99,6 @@
         const db = getFirestore(app);
         const storage = getStorage(app);
         const provider = new GoogleAuthProvider();
-
-        // 오프라인 지속성 활성화
-        enableIndexedDbPersistence(db).catch((err) => {
-            if (err.code == 'failed-precondition') {
-                console.log('여러 탭이 열려있어 오프라인 모드 실패');
-            } else if (err.code == 'unimplemented') {
-                console.log('브라우저가 지원하지 않음');
-            }
-        });
 
         let currentUser = null;
         let userList = [];
@@ -133,8 +124,9 @@
             LAST_TAB: 'dy_last_tab_v2'      // 마지막 탭 기억
         };
         const CACHE_EXPIRY_META = 1000 * 60 * 60 * 2;   // 메타: 2시간
-        const CACHE_EXPIRY_DRAFTS = 1000 * 60 * 15;     // 기안: 15분
+        const CACHE_EXPIRY_DRAFTS = 1000 * 60 * 30;     // 기안: 30분 (15분→30분, optimistic update로 정합성 보장)
         const CACHE_EXPIRY_USER = 1000 * 60 * 60 * 24;  // 유저: 24시간
+        const BG_UPDATE_THRESHOLD = 1000 * 60 * 3;      // 캐시 나이 3분 이상일 때만 백그라운드 갱신
 
         // =========================================================================
         // 캐시 도우미 함수
@@ -165,6 +157,15 @@
             } catch (e) {
                 return null;
             }
+        }
+
+        // 캐시가 존재하고 얼마나 됐는지 반환 (ms). 없으면 Infinity
+        function getCacheAge(key) {
+            try {
+                const raw = localStorage.getItem(key);
+                if (!raw) return Infinity;
+                return Date.now() - JSON.parse(raw).timestamp;
+            } catch (e) { return Infinity; }
         }
 
         // =========================================================================
@@ -298,23 +299,23 @@
             // 초기 탭 클릭
             clickInitialTab();
 
-            // 2단계: [백그라운드] DB에서 최신 데이터 병렬 로드
-            const bgUpdateDelay = (metaFromCache && draftsFromCache) ? 500 : 0;
-            
-            setTimeout(() => {
-                const promises = [];
-                
-                // 메타 업데이트 (캐시 있어도 백그라운드 갱신)
-                promises.push(fetchMetaFromDB().catch(e => console.error('Meta bg update fail:', e)));
-                
-                // 기안 업데이트 (캐시 있어도 백그라운드 갱신)
-                const activeTab = getActiveTabTarget();
-                promises.push(loadDraftsFromDB(activeTab, false).catch(e => console.error('Drafts bg update fail:', e)));
-                
-                Promise.all(promises).then(() => {
-                    console.log('[BG] 백그라운드 데이터 갱신 완료');
-                });
-            }, bgUpdateDelay);
+            // 2단계: [백그라운드] 캐시가 3분 이상 됐을 때만 DB 갱신 (불필요한 Firestore 호출 방지)
+            const draftsAge = getCacheAge(CACHE_KEYS.DRAFTS);
+            const metaAge = getCacheAge(CACHE_KEYS.META);
+            const needsBgUpdate = draftsAge > BG_UPDATE_THRESHOLD || metaAge > BG_UPDATE_THRESHOLD;
+
+            if (needsBgUpdate) {
+                setTimeout(() => {
+                    const promises = [];
+                    if (metaAge > BG_UPDATE_THRESHOLD)
+                        promises.push(fetchMetaFromDB().catch(e => console.error('Meta bg update fail:', e)));
+                    if (draftsAge > BG_UPDATE_THRESHOLD) {
+                        const activeTab = getActiveTabTarget();
+                        promises.push(loadDraftsFromDB(activeTab, false).catch(e => console.error('Drafts bg update fail:', e)));
+                    }
+                    Promise.all(promises).then(() => console.log('[BG] 백그라운드 갱신 완료'));
+                }, 3000); // 초기 렌더 완전히 끝난 후 갱신
+            }
 
             // 캐시가 하나도 없었으면 DB에서 직접 로드
             if (!metaFromCache) {
@@ -591,7 +592,7 @@
             }
 
             try {
-                const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(500));
+                const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(30));
                 // forceServer=true 시 IndexedDB 캐시 우회, 서버에서 직접 조회
                 const querySnapshot = forceServer ? await getDocsFromServer(q) : await getDocs(q);
                 let drafts = [];
