@@ -113,7 +113,14 @@
 
         let pendingDocId = null;
         let pendingAction = null;
-        
+
+        // ── 전체 기간 검색 상태 ──
+        let isGlobalSearchMode = false;
+        let globalSearchKeyword = "";
+        let globalSearchResults = [];
+        let globalSearchPage = 1;
+        const GLOBAL_PAGE_SIZE = 50;
+
         // =========================================================================
         // [최적화 핵심] 멀티 레이어 캐시 시스템
         // =========================================================================
@@ -566,6 +573,10 @@
         async function loadDrafts(listType, forceUpdate = false) {
             document.getElementById('page-title').textContent = getTitleByListType(listType);
             document.getElementById('search-input').value = '';
+            // 탭 전환 시 전체 검색 모드 초기화
+            isGlobalSearchMode = false; globalSearchKeyword = ''; globalSearchResults = []; globalSearchPage = 1;
+            const _hintEl = document.getElementById('global-search-hint');
+            if (_hintEl) _hintEl.classList.add('hidden');
 
             if (!forceUpdate) {
                 if (allFetchedData.length > 0) {
@@ -592,7 +603,7 @@
             }
 
             try {
-                const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(30));
+                const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(50));
                 // forceServer=true 시 IndexedDB 캐시 우회, 서버에서 직접 조회
                 const querySnapshot = forceServer ? await getDocsFromServer(q) : await getDocs(q);
                 let drafts = [];
@@ -619,21 +630,227 @@
         function runSearch(keyword) {
             const term = keyword.toLowerCase().trim();
             const activeTab = getActiveTabTarget();
-            
+            const hintEl = document.getElementById('global-search-hint');
+
+            // 전체 검색 모드 해제 시 로컬 데이터로 복귀
             if (!term) {
+                isGlobalSearchMode = false;
+                globalSearchKeyword = '';
+                globalSearchResults = [];
+                if (hintEl) hintEl.classList.add('hidden');
                 filteredDisplayData = allFetchedData.filter(draft => filterDraft(draft, activeTab));
-            } else {
-                filteredDisplayData = allFetchedData.filter(draft => {
-                    const matchesFilter = filterDraft(draft, activeTab);
-                    const matchesKeyword = (draft.title && draft.title.toLowerCase().includes(term)) ||
-                           (draft.drafter && draft.drafter.toLowerCase().includes(term)) ||
-                           (draft.docId && draft.docId.toLowerCase().includes(term)) ||
-                           (draft.corporation && draft.corporation.includes(term));
-                    return matchesFilter && matchesKeyword;
-                });
+                renderPaginatedItems();
+                return;
+            }
+
+            // 전체 검색 모드 중이면 globalSearchResults 표시
+            if (isGlobalSearchMode && globalSearchKeyword === term) {
+                filteredDisplayData = globalSearchResults;
+                renderPaginatedItems();
+                return;
+            }
+
+            // 로컬(30건) 검색
+            filteredDisplayData = allFetchedData.filter(draft => {
+                const matchesKeyword = (draft.title && draft.title.toLowerCase().includes(term)) ||
+                       (draft.drafter && draft.drafter.toLowerCase().includes(term)) ||
+                       (draft.docId && draft.docId.toLowerCase().includes(term)) ||
+                       (draft.corporation && draft.corporation.includes(term));
+                return matchesKeyword;
+            });
+
+            // 로컬 결과 힌트 표시 (항상 "전체 검색" 버튼 노출)
+            if (hintEl) {
+                hintEl.classList.remove('hidden');
+                hintEl.innerHTML = `
+                    <div class="flex items-center justify-between gap-3 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-sm">
+                        <span class="text-amber-700">
+                            <i class="bi bi-clock-history mr-1"></i>
+                            최근 50건 기준 검색 결과 <strong>${filteredDisplayData.length}건</strong>
+                        </span>
+                        <button onclick="searchGlobal('${term.replace(/'/g, "\'")}')"
+                            class="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow transition whitespace-nowrap">
+                            <i class="bi bi-search"></i> 전체 기간 검색
+                        </button>
+                    </div>`;
             }
             renderPaginatedItems();
         }
+
+        // =========================================================================
+        // 전체 기간 검색 (Firestore 서버 직접 쿼리)
+        // =========================================================================
+        window.searchGlobal = async function(keyword) {
+            const term = keyword.trim();
+            if (!term) return;
+
+            isGlobalSearchMode = true;
+            globalSearchKeyword = term;
+            globalSearchPage = 1;
+
+            const hintEl = document.getElementById('global-search-hint');
+            if (hintEl) {
+                hintEl.innerHTML = `<div class="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-700">
+                    <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                    전체 기간 검색 중...
+                </div>`;
+                hintEl.classList.remove('hidden');
+            }
+
+            try {
+                globalSearchResults = await fetchGlobalSearchResults(term, GLOBAL_PAGE_SIZE);
+                filteredDisplayData = globalSearchResults;
+                currentPage = 1;
+                renderPaginatedItems();
+                renderGlobalSearchBanner();
+            } catch(e) {
+                console.error('전체 검색 오류:', e);
+                showToast('검색 오류가 발생했습니다.', true);
+                if (hintEl) hintEl.classList.add('hidden');
+            }
+        };
+
+        async function fetchGlobalSearchResults(term, lim) {
+            const queries = [];
+            const termLower = term.toLowerCase();
+
+            // 1. docId 정확 매칭
+            queries.push(
+                getDocs(query(collection(db, 'drafts'), where('docId', '==', term)))
+                    .then(snap => snap.docs.map(d => ({id: d.id, ...d.data()})))
+                    .catch(() => [])
+            );
+
+            // 2. 제목 prefix 범위 검색 (한글/영문 시작어)
+            queries.push(
+                getDocs(query(collection(db, 'drafts'),
+                    orderBy('title'),
+                    where('title', '>=', term),
+                    where('title', '<=', term + ''),
+                    limit(lim)))
+                    .then(snap => snap.docs.map(d => ({id: d.id, ...d.data()})))
+                    .catch(() => [])
+            );
+
+            // 3. 기안자 이름으로 이메일 찾아 쿼리
+            const matchedUsers = userList.filter(u => u.name && u.name.includes(term));
+            for (const u of matchedUsers.slice(0, 3)) {
+                queries.push(
+                    getDocs(query(collection(db, 'drafts'),
+                        where('drafterEmail', '==', u.email),
+                        orderBy('createdAt', 'desc'),
+                        limit(lim)))
+                        .then(snap => snap.docs.map(d => ({id: d.id, ...d.data()})))
+                        .catch(() => [])
+                );
+            }
+
+            // 4. 법인명 매칭
+            const corpNames = ['동영(파주)', '동영투어', '동영(용인)', '동영(서울)'];
+            const matchedCorp = corpNames.find(c => c.includes(term));
+            if (matchedCorp) {
+                queries.push(
+                    getDocs(query(collection(db, 'drafts'),
+                        where('corporation', '==', matchedCorp),
+                        orderBy('createdAt', 'desc'),
+                        limit(lim)))
+                        .then(snap => snap.docs.map(d => ({id: d.id, ...d.data()})))
+                        .catch(() => [])
+                );
+            }
+
+            // 5. 카테고리 정확 매칭
+            const categories = ['보고', '경비', '직영수리비', '인사', '업무', '대외비'];
+            const matchedCat = categories.find(c => c === term);
+            if (matchedCat) {
+                queries.push(
+                    getDocs(query(collection(db, 'drafts'),
+                        where('category', '==', matchedCat),
+                        orderBy('createdAt', 'desc'),
+                        limit(lim)))
+                        .then(snap => snap.docs.map(d => ({id: d.id, ...d.data()})))
+                        .catch(() => [])
+                );
+            }
+
+            const allResults = await Promise.all(queries);
+
+            // 중복 제거 후 최신순 정렬
+            const seen = new Set();
+            const merged = [];
+            for (const arr of allResults) {
+                for (const d of arr) {
+                    const key = d.docId || d.id;
+                    if (!seen.has(key)) {
+                        seen.add(key);
+                        merged.push(d);
+                        if (d.docId) draftCache[d.docId] = d;
+                    }
+                }
+            }
+            merged.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+            return merged;
+        }
+
+        window.loadMoreGlobalSearch = async function() {
+            if (!isGlobalSearchMode) return;
+            globalSearchPage++;
+            const newLimit = GLOBAL_PAGE_SIZE * globalSearchPage;
+
+            const btn = document.getElementById('btn-load-more-global');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split animate-spin"></i> 검색 중...'; }
+
+            try {
+                globalSearchResults = await fetchGlobalSearchResults(globalSearchKeyword, newLimit);
+                filteredDisplayData = globalSearchResults;
+                renderPaginatedItems();
+                renderGlobalSearchBanner();
+            } catch(e) {
+                showToast('추가 검색 오류', true);
+            }
+        };
+
+        function renderGlobalSearchBanner() {
+            const hintEl = document.getElementById('global-search-hint');
+            if (!hintEl) return;
+            const cnt = globalSearchResults.length;
+            const limit = GLOBAL_PAGE_SIZE * globalSearchPage;
+            const mightHaveMore = cnt >= limit;
+            hintEl.classList.remove('hidden');
+            hintEl.innerHTML = `
+                <div class="flex items-center justify-between gap-3 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl text-sm">
+                    <span class="text-blue-700">
+                        <i class="bi bi-database-check mr-1"></i>
+                        전체 기간 검색 결과 <strong>${cnt}건</strong>
+                        ${mightHaveMore ? '<span class="text-xs text-blue-500 ml-1">(더 있을 수 있음)</span>' : ''}
+                    </span>
+                    <div class="flex items-center gap-2">
+                        ${mightHaveMore ? `<button id="btn-load-more-global" onclick="loadMoreGlobalSearch()"
+                            class="flex items-center gap-1 bg-white border border-blue-300 text-blue-600 hover:bg-blue-50 text-xs font-bold px-3 py-1.5 rounded-lg transition">
+                            <i class="bi bi-plus-circle"></i> 더 이전 자료 검색
+                        </button>` : ''}
+                        <button onclick="exitGlobalSearch()"
+                            class="flex items-center gap-1 text-gray-500 hover:text-gray-700 text-xs px-2 py-1.5 rounded-lg hover:bg-gray-100 transition">
+                            <i class="bi bi-x"></i> 닫기
+                        </button>
+                    </div>
+                </div>`;
+        }
+
+        window.exitGlobalSearch = function() {
+            isGlobalSearchMode = false;
+            globalSearchKeyword = '';
+            globalSearchResults = [];
+            globalSearchPage = 1;
+            const searchInput = document.getElementById('search-input');
+            if (searchInput) searchInput.value = '';
+            const hintEl = document.getElementById('global-search-hint');
+            if (hintEl) hintEl.classList.add('hidden');
+            const activeTab = getActiveTabTarget();
+            filteredDisplayData = allFetchedData.filter(draft => filterDraft(draft, activeTab));
+            currentPage = 1;
+            renderPaginatedItems();
+        };
 
         // =========================================================================
         // [최적화] 렌더링 성능 개선 - DocumentFragment 사용
@@ -1369,10 +1586,13 @@
             </header>
 
             <div class="p-4 md:p-8 flex-1 overflow-y-auto">
-                <div class="relative mb-4 md:mb-6">
+                <div class="relative mb-2">
                     <i class="bi bi-search absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"></i>
                     <input id="search-input" type="text" class="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 shadow-sm focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm bg-white" placeholder="제목, 기안자, 문서번호 검색...">
                 </div>
+
+                <!-- 전체 기간 검색 힌트/결과 배너 -->
+                <div id="global-search-hint" class="hidden mb-4"></div>
 
                 <div id="draft-list-container">
                     </div>
