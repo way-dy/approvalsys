@@ -713,10 +713,43 @@
         async function fetchGlobalSearchResults(term, lim) {
             const queries = [];
             const termLower = term.toLowerCase();
+            const UPPER = term + '';
 
-            // 1. docId 정확 매칭
+            // 1a. docId 정확 매칭 (예: '2026-0150')
             queries.push(
                 getDocs(query(collection(db, 'drafts'), where('docId', '==', term)))
+                    .then(snap => snap.docs.map(d => ({id: d.id, ...d.data()})))
+                    .catch(() => [])
+            );
+
+            // 1b. Firestore 문서 ID 직접 조회
+            queries.push(
+                getDoc(doc(db, 'drafts', term))
+                    .then(d => d.exists() ? [{id: d.id, ...d.data()}] : [])
+                    .catch(() => [])
+            );
+
+            // 1c. 숫자(일련번호)만 입력 시 연도 조합 시도 (예: '0150' → '2026-0150', '2025-0150')
+            if (/^\d{1,4}$/.test(term)) {
+                const padded = term.padStart(4, '0');
+                const curYear = new Date().getFullYear();
+                for (let y = curYear; y >= curYear - 3; y--) {
+                    const candidateId = y + '-' + padded;
+                    queries.push(
+                        getDoc(doc(db, 'drafts', candidateId))
+                            .then(d => d.exists() ? [{id: d.id, ...d.data()}] : [])
+                            .catch(() => [])
+                    );
+                }
+            }
+
+            // 1d. docId prefix 범위 검색 (예: '2026-' 입력 시 해당 연도 전체)
+            queries.push(
+                getDocs(query(collection(db, 'drafts'),
+                    orderBy('docId'),
+                    where('docId', '>=', term),
+                    where('docId', '<=', UPPER),
+                    limit(lim)))
                     .then(snap => snap.docs.map(d => ({id: d.id, ...d.data()})))
                     .catch(() => [])
             );
@@ -726,7 +759,7 @@
                 getDocs(query(collection(db, 'drafts'),
                     orderBy('title'),
                     where('title', '>=', term),
-                    where('title', '<=', term + ''),
+                    where('title', '<=', UPPER),
                     limit(lim)))
                     .then(snap => snap.docs.map(d => ({id: d.id, ...d.data()})))
                     .catch(() => [])
