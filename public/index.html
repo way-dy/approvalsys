@@ -603,11 +603,18 @@
             }
 
             try {
-                const q = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(50));
-                // forceServer=true 시 IndexedDB 캐시 우회, 서버에서 직접 조회
+                // [핵심] drafts_index (경량) 조회 - content/attachments 없어서 300건도 빠름
+                const q = query(collection(db, 'drafts_index'), orderBy('createdAt', 'desc'), limit(300));
                 const querySnapshot = forceServer ? await getDocsFromServer(q) : await getDocs(q);
                 let drafts = [];
                 querySnapshot.forEach((docSnap) => { drafts.push({ id: docSnap.id, ...docSnap.data() }); });
+
+                // drafts_index 없는 구버전 문서 대비: 결과가 비어있으면 기존 drafts로 폴백
+                if (drafts.length === 0 && !forceServer) {
+                    const fallbackQ = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(50));
+                    const fallbackSnap = await getDocs(fallbackQ);
+                    fallbackSnap.forEach((docSnap) => { drafts.push({ id: docSnap.id, ...docSnap.data() }); });
+                }
                 
                 allFetchedData = drafts; 
                 saveToCache(CACHE_KEYS.DRAFTS, allFetchedData);
@@ -715,41 +722,23 @@
             const termLower = term.toLowerCase();
             const UPPER = term + '';
 
-            // 1a. docId 정확 매칭 (예: '2026-0150')
-            queries.push(
-                getDocs(query(collection(db, 'drafts'), where('docId', '==', term)))
-                    .then(snap => snap.docs.map(d => ({id: d.id, ...d.data()})))
-                    .catch(() => [])
-            );
-
-            // 1b. Firestore 문서 ID 직접 조회
-            queries.push(
-                getDoc(doc(db, 'drafts', term))
-                    .then(d => d.exists() ? [{id: d.id, ...d.data()}] : [])
-                    .catch(() => [])
-            );
-
-            // 1c. 숫자(일련번호)만 입력 시 연도 조합 시도 (예: '0150' → '2026-0150', '2025-0150')
-            if (/^\d{1,4}$/.test(term)) {
-                const padded = term.padStart(4, '0');
-                const curYear = new Date().getFullYear();
-                for (let y = curYear; y >= curYear - 3; y--) {
-                    const candidateId = y + '-' + padded;
-                    queries.push(
-                        getDoc(doc(db, 'drafts', candidateId))
-                            .then(d => d.exists() ? [{id: d.id, ...d.data()}] : [])
-                            .catch(() => [])
-                    );
-                }
+            // ── [A] drafts_index searchTokens array-contains (부분 검색 핵심) ──
+            // 2글자 이상 토큰으로 검색 (1글자는 너무 광범위)
+            const searchToken = term.length >= 2 ? term : null;
+            if (searchToken) {
+                queries.push(
+                    getDocs(query(collection(db, 'drafts_index'),
+                        where('searchTokens', 'array-contains', searchToken),
+                        orderBy('createdAt', 'desc'),
+                        limit(lim)))
+                        .then(snap => snap.docs.map(d => ({id: d.id, ...d.data()})))
+                        .catch(e => { console.warn('[전체검색] searchTokens 쿼리 오류:', e); return []; })
+                );
             }
 
-            // 1d. docId prefix 범위 검색 (예: '2026-' 입력 시 해당 연도 전체)
+            // 1. docId 정확 매칭
             queries.push(
-                getDocs(query(collection(db, 'drafts'),
-                    orderBy('docId'),
-                    where('docId', '>=', term),
-                    where('docId', '<=', UPPER),
-                    limit(lim)))
+                getDocs(query(collection(db, 'drafts'), where('docId', '==', term)))
                     .then(snap => snap.docs.map(d => ({id: d.id, ...d.data()})))
                     .catch(() => [])
             );
@@ -759,7 +748,7 @@
                 getDocs(query(collection(db, 'drafts'),
                     orderBy('title'),
                     where('title', '>=', term),
-                    where('title', '<=', UPPER),
+                    where('title', '<=', term + ''),
                     limit(lim)))
                     .then(snap => snap.docs.map(d => ({id: d.id, ...d.data()})))
                     .catch(() => [])
@@ -1024,6 +1013,68 @@
         }
 
         // =========================================================================
+        // [drafts_index] n-gram 토큰 생성 + 경량 인덱스 저장
+        // =========================================================================
+        function generateSearchTokens(text) {
+            if (!text) return [];
+            const clean = text.replace(/\s+/g, ''); // 공백 제거
+            const tokens = new Set();
+            // 1-gram ~ 4-gram 생성
+            for (let size = 1; size <= 4; size++) {
+                for (let i = 0; i <= clean.length - size; i++) {
+                    tokens.add(clean.substring(i, i + size));
+                }
+            }
+            // 원본 공백 포함 단어도 추가 (단어 단위 검색)
+            text.split(/\s+/).forEach(w => { if (w) tokens.add(w); });
+            return [...tokens].slice(0, 500); // Firestore array 필드 한계 대비
+        }
+
+        function buildIndexDoc(draftData) {
+            // content, attachments 제외한 경량 인덱스 문서
+            const tokens = generateSearchTokens(
+                [draftData.title, draftData.drafter, draftData.category, draftData.corporation].join(' ')
+            );
+            return {
+                docId:           draftData.docId,
+                title:           draftData.title,
+                category:        draftData.category,
+                corporation:     draftData.corporation,
+                drafter:         draftData.drafter,
+                drafterEmail:    draftData.drafterEmail,
+                date:            draftData.date,
+                createdAt:       draftData.createdAt,
+                approver1Email:  draftData.approver1Email,
+                approver1Name:   draftData.approver1Name,
+                approver2Email:  draftData.approver2Email,
+                approver2Name:   draftData.approver2Name,
+                approval1Status: draftData.approval1Status  ?? null,
+                approval2Status: draftData.approval2Status  ?? null,
+                paymentDate:     draftData.paymentDate      ?? null,
+                searchTokens:    tokens
+            };
+        }
+
+        async function saveIndexDoc(draftData) {
+            try {
+                const idxDoc = buildIndexDoc(draftData);
+                await setDoc(doc(db, 'drafts_index', draftData.docId), idxDoc);
+            } catch(e) { console.warn('[drafts_index] 인덱스 저장 실패:', e); }
+        }
+
+        async function updateIndexDoc(docId, updateData) {
+            try {
+                // approval/payment 필드만 업데이트
+                const allowed = ['approval1Status','approval1Comment','approval2Status',
+                                 'approval2Comment','finalApprovalDate','paymentDate'];
+                const filtered = {};
+                allowed.forEach(k => { if (k in updateData) filtered[k] = updateData[k]; });
+                if (Object.keys(filtered).length > 0)
+                    await updateDoc(doc(db, 'drafts_index', docId), filtered);
+            } catch(e) { console.warn('[drafts_index] 인덱스 업데이트 실패:', e); }
+        }
+
+        // =========================================================================
         // 기안 저장
         // =========================================================================
         async function saveDraft() {
@@ -1095,7 +1146,10 @@
                 
                 if (isNew) await setDoc(doc(db, "drafts", newDocId), draftData);
                 else await updateDoc(doc(db, "drafts", newDocId), draftData);
-                
+
+                // drafts_index 동시 저장 (fire-and-forget, 실패해도 메인 저장엔 영향 없음)
+                saveIndexDoc(draftData);
+
                 syncToGoogleSheet(draftData);
                 if (isNew) sendEmailNotification('NEW', draftData);
 
@@ -1197,6 +1251,7 @@
                 }
                 
                 await updateDoc(docRef, updateData);
+                updateIndexDoc(docId, updateData); // drafts_index 동기화
 
                 const fullSyncedData = { ...draft, ...updateData };
                 syncToGoogleSheet(fullSyncedData);
@@ -1235,7 +1290,8 @@
             const dateVal = document.getElementById('detail-payment-date-input').value;
             if(!dateVal) return alert('날짜 선택');
             try { 
-                await updateDoc(doc(db, 'drafts', docId), { paymentDate: dateVal }); 
+                await updateDoc(doc(db, 'drafts', docId), { paymentDate: dateVal });
+                updateIndexDoc(docId, { paymentDate: dateVal }); // drafts_index 동기화
                 const draft = draftCache[docId];
                 const fullSyncedData = { ...draft, paymentDate: dateVal };
                 syncToGoogleSheet(fullSyncedData);
@@ -1287,9 +1343,25 @@
             document.getElementById('modal-draft').classList.remove('hidden');
         }
 
-        window.openDetailModal = (docId) => {
-            const draft = draftCache[docId];
+        window.openDetailModal = async (docId) => {
+            // drafts_index는 content/attachments/refLinks 없음 → 상세 조회 시 원본 drafts 단건 fetch
+            let draft = draftCache[docId];
             if (!draft) return;
+
+            // content 필드가 없으면 원본 drafts에서 조회 (drafts_index 출처 문서)
+            if (draft.content === undefined) {
+                const modal = document.getElementById('modal-detail');
+                document.getElementById('detail-content').innerHTML =
+                    '<div class="text-center text-gray-400 py-8"><i class="bi bi-hourglass-split animate-spin mr-2"></i>내용 불러오는 중...</div>';
+                modal.classList.remove('hidden');
+                try {
+                    const fullSnap = await getDoc(doc(db, 'drafts', docId));
+                    if (fullSnap.exists()) {
+                        draft = { ...draft, ...fullSnap.data() };
+                        draftCache[docId] = draft; // 캐시 업데이트
+                    }
+                } catch(e) { console.warn('원본 drafts 조회 실패:', e); }
+            }
             const modal = document.getElementById('modal-detail');
             document.getElementById('detail-doc-id').textContent = draft.docId;
             document.getElementById('detail-title').textContent = draft.title;
