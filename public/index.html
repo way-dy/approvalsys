@@ -265,10 +265,11 @@
                         team: matchedUser.team || '', 
                         role: matchedUser.role || '일반', 
                         confidentialAccess: matchedUser.confidentialAccess,
-                        approvalOnly: matchedUser.approvalOnly || false 
+                        approvalOnly: matchedUser.approvalOnly || false,
+                        isAdmin: matchedUser.isAdmin || false
                     };
                 } else {
-                    currentUser = { ...firebaseUser, name: firebaseUser.displayName, team: '', role: '미등록', confidentialAccess: false, approvalOnly: false };
+                    currentUser = { ...firebaseUser, name: firebaseUser.displayName, team: '', role: '미등록', confidentialAccess: false, approvalOnly: false, isAdmin: false };
                 }
                 // 유저 정보 캐시
                 saveToCache(CACHE_KEYS.USER, {
@@ -278,7 +279,8 @@
                     team: currentUser.team,
                     role: currentUser.role,
                     confidentialAccess: currentUser.confidentialAccess,
-                    approvalOnly: currentUser.approvalOnly
+                    approvalOnly: currentUser.approvalOnly,
+                    isAdmin: currentUser.isAdmin || false
                 });
             }
 
@@ -336,7 +338,8 @@
                         team: matchedUser.team || '', 
                         role: matchedUser.role || '일반', 
                         confidentialAccess: matchedUser.confidentialAccess,
-                        approvalOnly: matchedUser.approvalOnly || false 
+                        approvalOnly: matchedUser.approvalOnly || false,
+                        isAdmin: matchedUser.isAdmin || false
                     };
                     saveToCache(CACHE_KEYS.USER, {
                         email: currentUser.email,
@@ -345,10 +348,11 @@
                         team: currentUser.team,
                         role: currentUser.role,
                         confidentialAccess: currentUser.confidentialAccess,
-                        approvalOnly: currentUser.approvalOnly
+                        approvalOnly: currentUser.approvalOnly,
+                        isAdmin: currentUser.isAdmin || false
                     });
                 } else {
-                    currentUser = { ...firebaseUser, name: firebaseUser.displayName, team: '', role: '미등록', confidentialAccess: false, approvalOnly: false };
+                    currentUser = { ...firebaseUser, name: firebaseUser.displayName, team: '', role: '미등록', confidentialAccess: false, approvalOnly: false, isAdmin: false };
                 }
                 renderUserInfo();
                 applyRoleBasedUI();
@@ -371,7 +375,8 @@
                 team: cached.team,
                 role: cached.role,
                 confidentialAccess: cached.confidentialAccess,
-                approvalOnly: cached.approvalOnly
+                approvalOnly: cached.approvalOnly,
+                isAdmin: cached.isAdmin || false
             };
             
             // 캐시된 메타도 로드
@@ -403,7 +408,9 @@
 
         function applyRoleBasedUI() {
             if (!currentUser) return;
-            if (currentUser.approvalOnly) {
+            const isAdmin = currentUser.isAdmin;
+
+            if (currentUser.approvalOnly && !isAdmin) {
                 document.getElementById('btn-new-draft').classList.add('hidden');
                 const myDraftBtn = document.querySelector('[data-target="myDrafts"]');
                 if(myDraftBtn) myDraftBtn.classList.add('hidden');
@@ -413,8 +420,19 @@
                 if(myDraftBtn) myDraftBtn.classList.remove('hidden');
             }
             if (currentUser.team === '회계팀') document.getElementById('nav-accounting').classList.remove('hidden');
-            if (currentUser.role === '대표' || currentUser.confidentialAccess) {
+
+            // 관리자 또는 대외비 접근 권한자 → 대외비 메뉴 노출
+            if (isAdmin || currentUser.role === '대표' || currentUser.confidentialAccess) {
                 document.querySelectorAll('.confidential-menu').forEach(el => { el.classList.remove('hidden'); el.classList.add('flex'); });
+            }
+
+            // 관리자 뱃지 표시
+            if (isAdmin) {
+                const nameEl = document.getElementById('user-profile-name');
+                if (nameEl && !nameEl.querySelector('.admin-badge')) {
+                    nameEl.insertAdjacentHTML('beforeend',
+                        '<span class="admin-badge ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-700 border border-purple-200">관리자</span>');
+                }
             }
         }
 
@@ -990,18 +1008,30 @@
 
         function filterDraft(draft, listType) {
             const isConfidential = draft.category === '대외비';
-            const canViewConfidential = currentUser && (currentUser.role === '대표' || currentUser.confidentialAccess);
-            
+            const isAdmin = currentUser && currentUser.isAdmin;
+            // 관리자는 대외비 포함 전체 열람 가능
+            const canViewConfidential = isAdmin || (currentUser && (currentUser.role === '대표' || currentUser.confidentialAccess));
+
             const isAccountingTarget = currentUser && (currentUser.team === '회계팀') && 
                                        (!isConfidential || canViewConfidential) &&
                                        ['경비', '직영수리비'].includes(draft.category) &&
                                        draft.approval2Status === '결재' &&
                                        !draft.paymentDate;
 
+            // 관리자는 결재 대기 중인 모든 문서(대외비 포함) 처리 가능
+            const isPendingApproval = !draft.approval1Status || (draft.approval1Status === '결재' && !draft.approval2Status);
+
             switch (listType) {
-                case 'myDrafts': return currentUser && draft.drafterEmail === currentUser.email;
-                case 'toApprove': return currentUser && !isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
-                case 'toApproveConfidential': if (!canViewConfidential) return false; return currentUser && isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
+                case 'myDrafts':
+                    // 관리자는 본인 기안 + 전체 기안 모두 볼 수 있음 (myDrafts는 본인것만)
+                    return currentUser && draft.drafterEmail === currentUser.email;
+                case 'toApprove':
+                    if (isAdmin) return !isConfidential && isPendingApproval;
+                    return currentUser && !isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
+                case 'toApproveConfidential':
+                    if (!canViewConfidential) return false;
+                    if (isAdmin) return isConfidential && isPendingApproval;
+                    return currentUser && isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
                 case 'allDrafts': return !isConfidential;
                 case 'allConfidentialDrafts': return canViewConfidential && isConfidential;
                 case 'acc-paju': return isAccountingTarget && draft.corporation === '동영(파주)';
@@ -1253,14 +1283,25 @@
                 const status = action === 'approve' ? '결재' : '반려';
                 
                 if (draft.approver1Email === currentUser.email && !draft.approval1Status) {
-                    updateData.approval1Status = status; 
+                    // 정상 1차 결재
+                    updateData.approval1Status = status;
                     updateData.approval1Comment = comment;
                 } else if (draft.approver2Email === currentUser.email && draft.approval1Status === '결재') {
-                    updateData.approval2Status = status; 
+                    // 정상 2차 결재
+                    updateData.approval2Status = status;
                     updateData.approval2Comment = comment;
                     if (status === '결재') updateData.finalApprovalDate = new Date().toISOString();
+                } else if (currentUser.isAdmin && !draft.approval1Status) {
+                    // 관리자 1차 결재 대행
+                    updateData.approval1Status = status;
+                    updateData.approval1Comment = comment ? `[관리자 처리] ${comment}` : '[관리자 처리]';
+                } else if (currentUser.isAdmin && draft.approval1Status === '결재' && !draft.approval2Status) {
+                    // 관리자 2차 결재 대행
+                    updateData.approval2Status = status;
+                    updateData.approval2Comment = comment ? `[관리자 처리] ${comment}` : '[관리자 처리]';
+                    if (status === '결재') updateData.finalApprovalDate = new Date().toISOString();
                 } else {
-                     throw new Error('권한 없음');
+                    throw new Error('권한 없음');
                 }
                 
                 await updateDoc(docRef, updateData);
@@ -1447,16 +1488,19 @@
 
             const btnArea = document.getElementById('detail-actions');
             btnArea.innerHTML = '';
-            const isAppr1 = draft.approver1Email === currentUser.email && !draft.approval1Status;
-            const isAppr2 = draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status;
+            const isAdmin = currentUser.isAdmin;
+            const isAppr1 = (draft.approver1Email === currentUser.email || isAdmin) && !draft.approval1Status;
+            const isAppr2 = (draft.approver2Email === currentUser.email || isAdmin) && draft.approval1Status === '결재' && !draft.approval2Status;
             
             if (isAppr1 || isAppr2) {
                 btnArea.innerHTML = `<button onclick="processApproval('${draft.docId}', 'approve')" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 mr-2 text-sm shadow-sm">승인</button><button onclick="processApproval('${draft.docId}', 'reject')" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm shadow-sm">반려</button>`;
             }
 
             const isJeonGyeol = draft.approver1Name === '전결' || draft.approver1Email === 'jeongyeol';
-            const canEdit = (draft.drafterEmail === currentUser.email && !currentUser.approvalOnly) && 
-                            (!draft.approval1Status || (isJeonGyeol && !draft.approval2Status));
+            // 관리자: 모든 문서(대외비 포함) 모든 상태에서 수정 가능
+            const canEdit = isAdmin ||
+                            ((draft.drafterEmail === currentUser.email && !currentUser.approvalOnly) &&
+                            (!draft.approval1Status || (isJeonGyeol && !draft.approval2Status)));
 
             if (canEdit) {
                 btnArea.innerHTML += `<button onclick="editDraft('${draft.docId}')" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 mr-2 text-sm flex items-center gap-1 shadow-sm"><i class="bi bi-pencil"></i> 수정</button>`;
