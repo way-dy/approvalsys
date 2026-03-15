@@ -1018,19 +1018,14 @@
                                        draft.approval2Status === '결재' &&
                                        !draft.paymentDate;
 
-            // 관리자는 결재 대기 중인 모든 문서(대외비 포함) 처리 가능
-            const isPendingApproval = !draft.approval1Status || (draft.approval1Status === '결재' && !draft.approval2Status);
-
             switch (listType) {
                 case 'myDrafts':
-                    // 관리자는 본인 기안 + 전체 기안 모두 볼 수 있음 (myDrafts는 본인것만)
                     return currentUser && draft.drafterEmail === currentUser.email;
                 case 'toApprove':
-                    if (isAdmin) return !isConfidential && isPendingApproval;
+                    // 관리자 포함 모두 동일: 본인이 실제 결재자인 경우만
                     return currentUser && !isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
                 case 'toApproveConfidential':
                     if (!canViewConfidential) return false;
-                    if (isAdmin) return isConfidential && isPendingApproval;
                     return currentUser && isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
                 case 'allDrafts': return !isConfidential;
                 case 'allConfidentialDrafts': return canViewConfidential && isConfidential;
@@ -1283,22 +1278,13 @@
                 const status = action === 'approve' ? '결재' : '반려';
                 
                 if (draft.approver1Email === currentUser.email && !draft.approval1Status) {
-                    // 정상 1차 결재
+                    // 1차 결재
                     updateData.approval1Status = status;
                     updateData.approval1Comment = comment;
                 } else if (draft.approver2Email === currentUser.email && draft.approval1Status === '결재') {
-                    // 정상 2차 결재
+                    // 2차 결재
                     updateData.approval2Status = status;
                     updateData.approval2Comment = comment;
-                    if (status === '결재') updateData.finalApprovalDate = new Date().toISOString();
-                } else if (currentUser.isAdmin && !draft.approval1Status) {
-                    // 관리자 1차 결재 대행
-                    updateData.approval1Status = status;
-                    updateData.approval1Comment = comment ? `[관리자 처리] ${comment}` : '[관리자 처리]';
-                } else if (currentUser.isAdmin && draft.approval1Status === '결재' && !draft.approval2Status) {
-                    // 관리자 2차 결재 대행
-                    updateData.approval2Status = status;
-                    updateData.approval2Comment = comment ? `[관리자 처리] ${comment}` : '[관리자 처리]';
                     if (status === '결재') updateData.finalApprovalDate = new Date().toISOString();
                 } else {
                     throw new Error('권한 없음');
@@ -1489,8 +1475,9 @@
             const btnArea = document.getElementById('detail-actions');
             btnArea.innerHTML = '';
             const isAdmin = currentUser.isAdmin;
-            const isAppr1 = (draft.approver1Email === currentUser.email || isAdmin) && !draft.approval1Status;
-            const isAppr2 = (draft.approver2Email === currentUser.email || isAdmin) && draft.approval1Status === '결재' && !draft.approval2Status;
+            // 승인/반려 버튼: 본인이 실제 결재자일 때만 (관리자는 별도 패널에서 상태 수정)
+            const isAppr1 = draft.approver1Email === currentUser.email && !draft.approval1Status;
+            const isAppr2 = draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status;
             
             if (isAppr1 || isAppr2) {
                 btnArea.innerHTML = `<button onclick="processApproval('${draft.docId}', 'approve')" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 mr-2 text-sm shadow-sm">승인</button><button onclick="processApproval('${draft.docId}', 'reject')" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm shadow-sm">반려</button>`;
@@ -1521,8 +1508,89 @@
                 let infoMsg = draft.category === '직영수리비' ? (repairFormatted ? `<div class="text-blue-600 text-xs font-bold mb-2">수리비: ${repairFormatted}</div>` : `<div class="text-red-500 text-xs font-bold mb-2">수리비 없음</div>`) : '';
                 document.getElementById('repair-cost-display').innerHTML = infoMsg;
             }
+
+            // 관리자 패널 표시 및 현재 결재 상태 세팅
+            const adminPanel = document.getElementById('admin-approval-panel');
+            if (isAdmin) {
+                adminPanel.classList.remove('hidden');
+                // 결재자 드롭다운 옵션 채우기
+                const userOptions = userList.map(u =>
+                    `<option value="${u.email}">${u.name} (${u.team})</option>`
+                ).join('');
+                ['admin-approver1-email','admin-approver2-email'].forEach(id => {
+                    const sel = document.getElementById(id);
+                    sel.innerHTML = '<option value="">선택</option>' + userOptions;
+                });
+                // 현재 값으로 초기화
+                document.getElementById('admin-approver1-email').value = draft.approver1Email || '';
+                document.getElementById('admin-approval1-status').value = draft.approval1Status || '';
+                document.getElementById('admin-approval1-comment').value = draft.approval1Comment || '';
+                document.getElementById('admin-approver2-email').value = draft.approver2Email || '';
+                document.getElementById('admin-approval2-status').value = draft.approval2Status || '';
+                document.getElementById('admin-approval2-comment').value = draft.approval2Comment || '';
+            } else {
+                adminPanel.classList.add('hidden');
+            }
+
             modal.classList.remove('hidden');
         }
+
+        // ── 관리자 결재 상태 직접 저장 ────────────────────────────────
+        window.adminSaveApprovalStatus = async (docId) => {
+            if (!currentUser.isAdmin) return;
+            const draft = draftCache[docId];
+            if (!draft) return;
+
+            const appr1Email   = document.getElementById('admin-approver1-email').value;
+            const appr1Status  = document.getElementById('admin-approval1-status').value;
+            const appr1Comment = document.getElementById('admin-approval1-comment').value.trim();
+            const appr2Email   = document.getElementById('admin-approver2-email').value;
+            const appr2Status  = document.getElementById('admin-approval2-status').value;
+            const appr2Comment = document.getElementById('admin-approval2-comment').value.trim();
+
+            const updateData = {
+                approver1Email:   appr1Email,
+                approver1Name:    getUserNameByEmail(appr1Email),
+                approval1Status:  appr1Status  || null,
+                approval1Comment: appr1Comment || null,
+                approver2Email:   appr2Email,
+                approver2Name:    getUserNameByEmail(appr2Email),
+                approval2Status:  appr2Status  || null,
+                approval2Comment: appr2Comment || null,
+                // 2차 결재 완료로 변경 시 finalApprovalDate 자동 설정
+                finalApprovalDate: (appr2Status === '결재')
+                    ? (draft.finalApprovalDate || new Date().toISOString())
+                    : null,
+                // 감사 추적 로그
+                adminEditLog: {
+                    editor: currentUser.email,
+                    editorName: currentUser.name,
+                    timestamp: new Date().toISOString(),
+                }
+            };
+
+            try {
+                showLoading('결재 상태 저장 중...');
+                await updateDoc(doc(db, 'drafts', docId), updateData);
+                updateIndexDoc(docId, updateData);
+
+                // Optimistic Update
+                const fullSyncedData = { ...draft, ...updateData };
+                draftCache[docId] = fullSyncedData;
+                const aidx = allFetchedData.findIndex(d => d.docId === docId);
+                if (aidx !== -1) allFetchedData[aidx] = fullSyncedData;
+                localStorage.removeItem(CACHE_KEYS.DRAFTS);
+
+                closeModal('modal-detail');
+                showToast('결재 상태가 저장되었습니다.', 'success');
+                renderWithFilter(getActiveTabTarget());
+                setTimeout(() => loadDraftsFromDB(getActiveTabTarget(), false).catch(() => {}), 2000);
+            } catch(e) {
+                showToast('저장 오류: ' + e.message, 'error');
+            } finally {
+                hideLoading();
+            }
+        };
 
         window.editDraft = (docId) => {
             const draft = draftCache[docId];
@@ -1909,6 +1977,69 @@
                     <div class="flex items-center gap-3">
                         <input type="date" id="detail-payment-date-input" class="border p-2 rounded text-sm">
                         <button onclick="savePaymentDate(document.getElementById('detail-doc-id').textContent)" class="bg-gray-800 text-white px-3 py-2 rounded hover:bg-black text-xs">지급일 저장</button>
+                    </div>
+                </div>
+
+                <!-- 관리자 전용 결재 상태 수정 패널 -->
+                <div id="admin-approval-panel" class="hidden mt-6 pt-6 border-t-2 border-dashed border-purple-200">
+                    <div class="flex items-center gap-2 mb-4">
+                        <div class="w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center shrink-0">
+                            <i class="bi bi-shield-lock-fill text-purple-600 text-xs"></i>
+                        </div>
+                        <h4 class="font-bold text-purple-700 text-sm">관리자 — 결재 상태 직접 수정</h4>
+                    </div>
+                    <div class="bg-purple-50 border border-purple-100 rounded-xl p-4 space-y-4">
+
+                        <!-- 1차 결재 -->
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                            <div>
+                                <label class="text-xs font-bold text-gray-500 mb-1 block">1차 결재자</label>
+                                <select id="admin-approver1-email" class="w-full border border-gray-200 rounded-lg p-2 text-sm bg-white focus:ring-2 focus:ring-purple-400 focus:outline-none">
+                                    <option value="">선택</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-gray-500 mb-1 block">1차 결재 상태</label>
+                                <select id="admin-approval1-status" class="w-full border border-gray-200 rounded-lg p-2 text-sm bg-white focus:ring-2 focus:ring-purple-400 focus:outline-none">
+                                    <option value="">대기 (미결재)</option>
+                                    <option value="결재">결재</option>
+                                    <option value="반려">반려</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-gray-500 mb-1 block">1차 의견</label>
+                                <input type="text" id="admin-approval1-comment" placeholder="의견 (선택)" class="w-full border border-gray-200 rounded-lg p-2 text-sm bg-white focus:ring-2 focus:ring-purple-400 focus:outline-none">
+                            </div>
+                        </div>
+
+                        <!-- 2차 결재 -->
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                            <div>
+                                <label class="text-xs font-bold text-gray-500 mb-1 block">2차 결재자</label>
+                                <select id="admin-approver2-email" class="w-full border border-gray-200 rounded-lg p-2 text-sm bg-white focus:ring-2 focus:ring-purple-400 focus:outline-none">
+                                    <option value="">선택</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-gray-500 mb-1 block">2차 결재 상태</label>
+                                <select id="admin-approval2-status" class="w-full border border-gray-200 rounded-lg p-2 text-sm bg-white focus:ring-2 focus:ring-purple-400 focus:outline-none">
+                                    <option value="">대기 (미결재)</option>
+                                    <option value="결재">결재</option>
+                                    <option value="반려">반려</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold text-gray-500 mb-1 block">2차 의견</label>
+                                <input type="text" id="admin-approval2-comment" placeholder="의견 (선택)" class="w-full border border-gray-200 rounded-lg p-2 text-sm bg-white focus:ring-2 focus:ring-purple-400 focus:outline-none">
+                            </div>
+                        </div>
+
+                        <div class="flex justify-end pt-1">
+                            <button onclick="adminSaveApprovalStatus(document.getElementById('detail-doc-id').textContent)"
+                                class="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold rounded-xl shadow-md shadow-purple-200 transition flex items-center gap-2">
+                                <i class="bi bi-floppy2-fill"></i> 결재 상태 저장
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
