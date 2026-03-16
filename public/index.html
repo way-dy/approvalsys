@@ -421,8 +421,8 @@
             }
             if (currentUser.team === '회계팀') document.getElementById('nav-accounting').classList.remove('hidden');
 
-            // 관리자 또는 대외비 접근 권한자 → 대외비 메뉴 노출
-            if (isAdmin || currentUser.role === '대표' || currentUser.confidentialAccess) {
+            // em시트 E열 '대외비' 계정만 메뉴 노출 (isAdmin·대표 예외 없음)
+            if (currentUser.confidentialAccess === true) {
                 document.querySelectorAll('.confidential-menu').forEach(el => { el.classList.remove('hidden'); el.classList.add('flex'); });
             }
 
@@ -668,15 +668,16 @@
                 return;
             }
 
-            // 전체 검색 모드 중이면 globalSearchResults 표시
+            // 전체 검색 모드 중이면 globalSearchResults 표시 (권한 필터 적용)
             if (isGlobalSearchMode && globalSearchKeyword === term) {
-                filteredDisplayData = globalSearchResults;
+                filteredDisplayData = globalSearchResults.filter(d => filterDraft(d, activeTab));
                 renderPaginatedItems();
                 return;
             }
 
-            // 로컬(30건) 검색
+            // 로컬(30건) 검색 — filterDraft 권한 체크 필수 적용
             filteredDisplayData = allFetchedData.filter(draft => {
+                if (!filterDraft(draft, activeTab)) return false;
                 const matchesKeyword = (draft.title && draft.title.toLowerCase().includes(term)) ||
                        (draft.drafter && draft.drafter.toLowerCase().includes(term)) ||
                        (draft.docId && draft.docId.toLowerCase().includes(term)) ||
@@ -724,7 +725,7 @@
 
             try {
                 globalSearchResults = await fetchGlobalSearchResults(term, GLOBAL_PAGE_SIZE);
-                filteredDisplayData = globalSearchResults;
+                filteredDisplayData = globalSearchResults.filter(d => filterDraft(d, getActiveTabTarget()));
                 currentPage = 1;
                 renderPaginatedItems();
                 renderGlobalSearchBanner();
@@ -842,7 +843,7 @@
 
             try {
                 globalSearchResults = await fetchGlobalSearchResults(globalSearchKeyword, newLimit);
-                filteredDisplayData = globalSearchResults;
+                filteredDisplayData = globalSearchResults.filter(d => filterDraft(d, getActiveTabTarget()));
                 renderPaginatedItems();
                 renderGlobalSearchBanner();
             } catch(e) {
@@ -1008,12 +1009,33 @@
 
         function filterDraft(draft, listType) {
             const isConfidential = draft.category === '대외비';
-            const isAdmin = currentUser && currentUser.isAdmin;
-            // 관리자는 대외비 포함 전체 열람 가능
-            const canViewConfidential = isAdmin || (currentUser && (currentUser.role === '대표' || currentUser.confidentialAccess));
 
-            const isAccountingTarget = currentUser && (currentUser.team === '회계팀') && 
-                                       (!isConfidential || canViewConfidential) &&
+            // ── 대외비 권한: em시트 E열 '대외비' 마킹 계정만 (isAdmin·대표·임원 등 예외 없음)
+            const canViewConfidential = currentUser && currentUser.confidentialAccess === true;
+
+            // 대외비 문서 처리 원칙
+            if (isConfidential) {
+                switch (listType) {
+                    case 'myDrafts':
+                        // 본인이 직접 올린 대외비만 본인에게 허용
+                        return currentUser && draft.drafterEmail === currentUser.email;
+                    case 'toApproveConfidential':
+                        // 대외비 권한자 + 본인이 결재자인 경우만
+                        if (!canViewConfidential) return false;
+                        return currentUser && ((draft.approver1Email === currentUser.email && !draft.approval1Status) ||
+                               (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
+                    case 'allConfidentialDrafts':
+                        // 대외비 권한자만 전체 열람
+                        return canViewConfidential;
+                    default:
+                        // toApprove, allDrafts, 회계팀 탭 등 모든 나머지 탭 — 완전 차단
+                        return false;
+                }
+            }
+
+            // ── 일반 문서 (대외비 아닌 경우) ──
+            const isAdmin = currentUser && currentUser.isAdmin;
+            const isAccountingTarget = currentUser && (currentUser.team === '회계팀') &&
                                        ['경비', '직영수리비'].includes(draft.category) &&
                                        draft.approval2Status === '결재' &&
                                        !draft.paymentDate;
@@ -1022,13 +1044,14 @@
                 case 'myDrafts':
                     return currentUser && draft.drafterEmail === currentUser.email;
                 case 'toApprove':
-                    // 관리자 포함 모두 동일: 본인이 실제 결재자인 경우만
-                    return currentUser && !isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
+                    return currentUser && ((draft.approver1Email === currentUser.email && !draft.approval1Status) ||
+                           (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
                 case 'toApproveConfidential':
-                    if (!canViewConfidential) return false;
-                    return currentUser && isConfidential && ((draft.approver1Email === currentUser.email && !draft.approval1Status) || (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
-                case 'allDrafts': return !isConfidential;
-                case 'allConfidentialDrafts': return canViewConfidential && isConfidential;
+                    return false; // 일반 문서는 대외비 탭에 표시 안 함
+                case 'allDrafts':
+                    return true;
+                case 'allConfidentialDrafts':
+                    return false; // 일반 문서는 대외비 탭에 표시 안 함
                 case 'acc-paju': return isAccountingTarget && draft.corporation === '동영(파주)';
                 case 'acc-yongin': return isAccountingTarget && draft.corporation === '동영(용인)';
                 case 'acc-seoul': return isAccountingTarget && draft.corporation === '동영(서울)';
@@ -1408,6 +1431,13 @@
             let draft = draftCache[docId];
             if (!draft) return;
 
+            // ── 대외비 직접 접근 차단 (URL 직접 호출 등 우회 방지) ──
+            if (draft.category === '대외비') {
+                const canView = (currentUser && currentUser.confidentialAccess === true) ||
+                                (currentUser && draft.drafterEmail === currentUser.email);
+                if (!canView) return; // 조용히 차단
+            }
+
             // content 필드가 없으면 원본 drafts에서 조회 (drafts_index 출처 문서)
             if (draft.content === undefined) {
                 const modal = document.getElementById('modal-detail');
@@ -1726,6 +1756,8 @@
     </script>
 </head>
 <body>
+<!-- ★ 긴급 점검 — 해제 시 이 블록만 삭제 -->
+
 
     <div id="loading-overlay" class="fixed inset-0 bg-white/90 z-50 flex flex-col justify-center items-center backdrop-blur-sm hidden">
         <div class="animate-spin rounded-full h-10 w-10 border-b-4 border-blue-600 mb-4"></div>
