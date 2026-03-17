@@ -114,6 +114,10 @@
         let pendingDocId = null;
         let pendingAction = null;
 
+        // ── 대외비 재인증 세션 관리 ──
+        let confidentialAuthTime = null;                  // 마지막 재인증 시각
+        const CONFIDENTIAL_SESSION_MS = 30 * 60 * 1000;  // 30분 세션 유효
+
         // ── 전체 기간 검색 상태 ──
         let isGlobalSearchMode = false;
         let globalSearchKeyword = "";
@@ -1426,17 +1430,97 @@
             document.getElementById('modal-draft').classList.remove('hidden');
         }
 
+        // =========================================================================
+        // 대외비 이중 인증 — 본인 확인 + 재인증 + 열람 로그
+        // =========================================================================
+
+        // 이 문서를 열람할 수 있는 계정인지 확인 (기안자 / 1차결재자 / 2차결재자만)
+        function isConfidentialViewer(draft) {
+            if (!currentUser) return false;
+            return draft.drafterEmail === currentUser.email ||
+                   draft.approver1Email === currentUser.email ||
+                   draft.approver2Email === currentUser.email;
+        }
+
+        // Google 재인증 팝업 — Promise 반환 (성공: true / 실패: false)
+        async function reAuthWithGoogle() {
+            try {
+                const result = await signInWithPopup(auth, provider);
+                // 재인증한 계정이 현재 로그인 계정과 동일한지 확인
+                if (result.user.email !== currentUser.email) {
+                    showToast('본인 계정으로 인증해주세요.', 'warning');
+                    return false;
+                }
+                confidentialAuthTime = Date.now();
+                return true;
+            } catch(e) {
+                return false; // 팝업 닫거나 취소 시
+            }
+        }
+
+        // 대외비 열람 로그 기록 (Firestore accessLogs)
+        async function logConfidentialAccess(draft) {
+            try {
+                const role = draft.drafterEmail === currentUser.email ? '기안자'
+                           : draft.approver1Email === currentUser.email ? '1차결재자'
+                           : draft.approver2Email === currentUser.email ? '2차결재자'
+                           : '기타';
+                await setDoc(doc(collection(db, 'accessLogs')), {
+                    docId:       draft.docId,
+                    docTitle:    draft.title,
+                    category:    draft.category,
+                    viewer:      currentUser.email,
+                    viewerName:  currentUser.name,
+                    role:        role,
+                    authMethod:  'google_reauth',
+                    timestamp:   new Date().toISOString()
+                });
+            } catch(e) { console.warn('[accessLog] 기록 실패:', e); }
+        }
+
         window.openDetailModal = async (docId) => {
             // drafts_index는 content/attachments/refLinks 없음 → 상세 조회 시 원본 drafts 단건 fetch
             let draft = draftCache[docId];
             if (!draft) return;
 
-            // ── 대외비 직접 접근 차단 (URL 직접 호출 등 우회 방지) ──
+            // ── 대외비 이중 보안 ──────────────────────────────────────────
             if (draft.category === '대외비') {
-                const canView = (currentUser && currentUser.confidentialAccess === true) ||
-                                (currentUser && draft.drafterEmail === currentUser.email);
-                if (!canView) return; // 조용히 차단
+
+                // [1단계] 기안자 / 1차결재자 / 2차결재자만 열람 가능
+                if (!isConfidentialViewer(draft)) {
+                    showToast('이 문서에 대한 열람 권한이 없습니다.', 'warning');
+                    return;
+                }
+
+                // [2단계] 30분 내 재인증 기록 없으면 Google 재인증 팝업
+                const isRecentlyAuthed = confidentialAuthTime &&
+                    (Date.now() - confidentialAuthTime < CONFIDENTIAL_SESSION_MS);
+
+                if (!isRecentlyAuthed) {
+                    // 재인증 안내 confirm
+                    const proceed = await showConfirm({
+                        title: '대외비 문서 본인 확인',
+                        message: '대외비 문서 열람을 위해 Google 계정 재인증이 필요합니다.<br><span class="text-xs text-gray-400">인증 후 30분간 유효합니다.</span>',
+                        confirmText: '인증하기',
+                        cancelText: '취소',
+                        type: 'info'
+                    });
+                    if (!proceed) return;
+
+                    showLoading('본인 확인 중...');
+                    const authed = await reAuthWithGoogle();
+                    hideLoading();
+
+                    if (!authed) {
+                        showToast('인증이 취소되었습니다.', 'warning');
+                        return;
+                    }
+                }
+
+                // [3단계] 열람 로그 기록 (fire-and-forget)
+                logConfidentialAccess(draft);
             }
+            // ─────────────────────────────────────────────────────────────
 
             // content 필드가 없으면 원본 drafts에서 조회 (drafts_index 출처 문서)
             if (draft.content === undefined) {
@@ -1497,7 +1581,21 @@
 
             const filesContainer = document.getElementById('detail-files');
             filesContainer.innerHTML = '';
-            if (draft.attachments) draft.attachments.forEach(file => filesContainer.innerHTML += `<a href="${file.url}" target="_blank" class="inline-flex items-center px-3 py-1 rounded-full border border-gray-300 bg-gray-50 text-xs text-gray-700 hover:bg-gray-100 mr-2 mb-2"><i class="bi bi-paperclip mr-1"></i> ${file.name}</a>`);
+            if (draft.attachments) {
+                const isConfidentialDoc = draft.category === '대외비';
+                draft.attachments.forEach(file => {
+                    if (isConfidentialDoc) {
+                        // 대외비 첨부파일: 클릭 시 로그 기록 후 열기
+                        filesContainer.innerHTML += `<button
+                            onclick="openConfidentialFile('${draft.docId}', '${file.name.replace(/'/g,"\'")}', '${file.url.replace(/'/g,"\'")}')"
+                            class="inline-flex items-center px-3 py-1 rounded-full border border-red-200 bg-red-50 text-xs text-red-700 hover:bg-red-100 mr-2 mb-2 cursor-pointer">
+                            <i class="bi bi-shield-lock-fill mr-1"></i> ${file.name}
+                        </button>`;
+                    } else {
+                        filesContainer.innerHTML += `<a href="${file.url}" target="_blank" class="inline-flex items-center px-3 py-1 rounded-full border border-gray-300 bg-gray-50 text-xs text-gray-700 hover:bg-gray-100 mr-2 mb-2"><i class="bi bi-paperclip mr-1"></i> ${file.name}</a>`;
+                    }
+                });
+            }
 
             renderApprovalStatus('detail-appr1', draft.approver1Name, draft.approval1Status, draft.approval1Comment);
             renderApprovalStatus('detail-appr2', draft.approver2Name, draft.approval2Status, draft.approval2Comment);
@@ -1620,6 +1718,26 @@
             } finally {
                 hideLoading();
             }
+        };
+
+        // 대외비 첨부파일 열기 — 파일별 로그 기록
+        window.openConfidentialFile = async (docId, fileName, url) => {
+            const draft = draftCache[docId];
+            try {
+                // 파일 열람 로그 (파일명 포함)
+                await setDoc(doc(collection(db, 'accessLogs')), {
+                    docId:       docId,
+                    docTitle:    draft ? draft.title : docId,
+                    category:    '대외비',
+                    viewer:      currentUser.email,
+                    viewerName:  currentUser.name,
+                    type:        'file_open',
+                    fileName:    fileName,
+                    authMethod:  'google_reauth',
+                    timestamp:   new Date().toISOString()
+                });
+            } catch(e) { console.warn('[fileLog] 기록 실패:', e); }
+            window.open(url, '_blank');
         };
 
         window.editDraft = (docId) => {
