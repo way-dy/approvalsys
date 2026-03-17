@@ -1434,6 +1434,37 @@
         // 대외비 이중 인증 — 본인 확인 + 재인증 + 열람 로그
         // =========================================================================
 
+        // ── 커스텀 Confirm 다이얼로그 (Promise 기반) ────────────────────
+        function showConfirm({ title, message, confirmText = '확인', cancelText = '취소', type = 'info' } = {}) {
+            return new Promise(resolve => {
+                const isDanger = type === 'danger';
+                const overlay = document.createElement('div');
+                overlay.className = 'fixed inset-0 z-[300] flex items-center justify-center';
+                overlay.innerHTML = `
+                    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm"></div>
+                    <div class="relative w-full max-w-sm mx-4 bg-white rounded-2xl shadow-2xl overflow-hidden" style="animation:fadeInUp .22s cubic-bezier(.16,1,.3,1)">
+                        <div class="px-6 pt-6 pb-2 flex items-start gap-4">
+                            <div class="shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${isDanger ? 'bg-red-100' : 'bg-blue-100'}">
+                                <i class="bi ${isDanger ? 'bi-exclamation-triangle-fill text-red-500' : 'bi-question-circle-fill text-blue-500'} text-lg"></i>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <h3 class="text-base font-bold text-gray-900 mb-1">${title || '확인'}</h3>
+                                <p class="text-sm text-gray-500 leading-relaxed">${message || ''}</p>
+                            </div>
+                        </div>
+                        <div class="px-6 py-4 flex justify-end gap-2">
+                            <button id="_cfm_cancel" class="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 text-sm font-medium transition">${cancelText}</button>
+                            <button id="_cfm_ok" class="px-5 py-2 rounded-lg text-white text-sm font-bold shadow-sm transition ${isDanger ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-600 hover:bg-blue-700'}">${confirmText}</button>
+                        </div>
+                    </div>`;
+                document.body.appendChild(overlay);
+                const close = (result) => { overlay.remove(); resolve(result); };
+                overlay.querySelector('#_cfm_ok').onclick = () => close(true);
+                overlay.querySelector('#_cfm_cancel').onclick = () => close(false);
+                overlay.querySelector('.absolute').onclick = () => close(false);
+            });
+        }
+
         // 이 문서를 열람할 수 있는 계정인지 확인 (기안자 / 1차결재자 / 2차결재자만)
         function isConfidentialViewer(draft) {
             if (!currentUser) return false;
