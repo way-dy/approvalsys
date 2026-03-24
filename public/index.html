@@ -125,6 +125,9 @@
         let globalSearchPage = 1;
         const GLOBAL_PAGE_SIZE = 50;
 
+        // ── Optimistic Update 보호: 최근 결재 처리한 문서 ID ──
+        let recentlyUpdatedDocIds = new Set();
+
         // =========================================================================
         // [최적화 핵심] 멀티 레이어 캐시 시스템
         // =========================================================================
@@ -638,7 +641,13 @@
                     fallbackSnap.forEach((docSnap) => { drafts.push({ id: docSnap.id, ...docSnap.data() }); });
                 }
                 
-                allFetchedData = drafts; 
+                allFetchedData = drafts.map(serverDoc => {
+                    // ★ 최근 결재 처리한 문서는 draftCache(Optimistic) 데이터 유지
+                    if (recentlyUpdatedDocIds.has(serverDoc.docId) && draftCache[serverDoc.docId]) {
+                        return draftCache[serverDoc.docId];
+                    }
+                    return serverDoc;
+                }); 
                 saveToCache(CACHE_KEYS.DRAFTS, allFetchedData);
                 renderWithFilter(listType || getActiveTabTarget());
 
@@ -1121,9 +1130,19 @@
                                  'approval2Comment','finalApprovalDate','paymentDate'];
                 const filtered = {};
                 allowed.forEach(k => { if (k in updateData) filtered[k] = updateData[k]; });
-                if (Object.keys(filtered).length > 0)
-                    await updateDoc(doc(db, 'drafts_index', docId), filtered);
-            } catch(e) { console.warn('[drafts_index] 인덱스 업데이트 실패:', e); }
+                if (Object.keys(filtered).length === 0) return;
+                await updateDoc(doc(db, 'drafts_index', docId), filtered);
+            } catch(e) {
+                // ★ drafts_index에 문서가 없으면 draftCache에서 전체 인덱스 재생성
+                console.warn('[drafts_index] update 실패, setDoc 폴백 시도:', e);
+                try {
+                    const cached = draftCache[docId];
+                    if (cached) {
+                        const idxDoc = buildIndexDoc({ ...cached, ...updateData });
+                        await setDoc(doc(db, 'drafts_index', docId), idxDoc);
+                    }
+                } catch(e2) { console.error('[drafts_index] 폴백도 실패:', e2); }
+            }
         }
 
         // =========================================================================
@@ -1318,7 +1337,7 @@
                 }
                 
                 await updateDoc(docRef, updateData);
-                updateIndexDoc(docId, updateData); // drafts_index 동기화
+                await updateIndexDoc(docId, updateData); // ★ await로 drafts_index 반영 보장
 
                 const fullSyncedData = { ...draft, ...updateData };
                 syncToGoogleSheet(fullSyncedData);
@@ -1338,6 +1357,10 @@
                 const _aidx = allFetchedData.findIndex(d => d.docId === docId);
                 if (_aidx !== -1) allFetchedData[_aidx] = fullSyncedData;
                 localStorage.removeItem(CACHE_KEYS.DRAFTS);
+
+                // ★ 백그라운드 갱신 시 서버 stale 데이터가 Optimistic을 덮어쓰지 않도록 보호
+                recentlyUpdatedDocIds.add(docId);
+                setTimeout(() => recentlyUpdatedDocIds.delete(docId), 10000);
 
                 closeCommentModal();
                 closeModal('modal-detail');
@@ -1370,7 +1393,7 @@
             if(!dateVal) return alert('날짜 선택');
             try { 
                 await updateDoc(doc(db, 'drafts', docId), { paymentDate: dateVal });
-                updateIndexDoc(docId, { paymentDate: dateVal }); // drafts_index 동기화
+                await updateIndexDoc(docId, { paymentDate: dateVal }); // ★ await로 반영 보장
 
                 // ── Optimistic Update ──
                 const draft = draftCache[docId];
@@ -1380,6 +1403,10 @@
                 const _pidx = allFetchedData.findIndex(d => d.docId === docId);
                 if (_pidx !== -1) allFetchedData[_pidx] = fullSyncedData;
                 localStorage.removeItem(CACHE_KEYS.DRAFTS);
+
+                // ★ 백그라운드 갱신 시 stale 데이터 덮어쓰기 방지
+                recentlyUpdatedDocIds.add(docId);
+                setTimeout(() => recentlyUpdatedDocIds.delete(docId), 10000);
 
                 showToast('지급일이 저장되었습니다.');
                 closeModal('modal-detail');
@@ -1562,8 +1589,34 @@
                 try {
                     const fullSnap = await getDoc(doc(db, 'drafts', docId));
                     if (fullSnap.exists()) {
+                        const prevAppr1 = draft.approval1Status;
+                        const prevAppr2 = draft.approval2Status;
                         draft = { ...draft, ...fullSnap.data() };
                         draftCache[docId] = draft; // 캐시 업데이트
+
+                        // ★ drafts_index ↔ drafts 불일치 자동 보정
+                        const statusChanged = prevAppr1 !== draft.approval1Status || prevAppr2 !== draft.approval2Status;
+                        if (statusChanged) {
+                            console.log(`[자동보정] ${docId}: index(${prevAppr1}/${prevAppr2}) → drafts(${draft.approval1Status}/${draft.approval2Status})`);
+                            // allFetchedData(리스트 소스) 즉시 반영
+                            const _fixIdx = allFetchedData.findIndex(d => d.docId === docId);
+                            if (_fixIdx !== -1) {
+                                allFetchedData[_fixIdx] = { ...allFetchedData[_fixIdx], 
+                                    approval1Status: draft.approval1Status, 
+                                    approval2Status: draft.approval2Status,
+                                    finalApprovalDate: draft.finalApprovalDate || null
+                                };
+                            }
+                            localStorage.removeItem(CACHE_KEYS.DRAFTS);
+                            // drafts_index DB도 비동기 보정 (fire-and-forget)
+                            updateIndexDoc(docId, {
+                                approval1Status: draft.approval1Status,
+                                approval2Status: draft.approval2Status,
+                                finalApprovalDate: draft.finalApprovalDate || null
+                            });
+                            // 리스트 즉시 리렌더 (모달 뒤에서 갱신됨)
+                            renderWithFilter(getActiveTabTarget());
+                        }
                     }
                 } catch(e) { console.warn('원본 drafts 조회 실패:', e); }
             }
@@ -1731,7 +1784,7 @@
             try {
                 showLoading('결재 상태 저장 중...');
                 await updateDoc(doc(db, 'drafts', docId), updateData);
-                updateIndexDoc(docId, updateData);
+                await updateIndexDoc(docId, updateData); // ★ await로 반영 보장
 
                 // Optimistic Update
                 const fullSyncedData = { ...draft, ...updateData };
@@ -1739,6 +1792,10 @@
                 const aidx = allFetchedData.findIndex(d => d.docId === docId);
                 if (aidx !== -1) allFetchedData[aidx] = fullSyncedData;
                 localStorage.removeItem(CACHE_KEYS.DRAFTS);
+
+                // ★ 백그라운드 갱신 시 stale 데이터 덮어쓰기 방지
+                recentlyUpdatedDocIds.add(docId);
+                setTimeout(() => recentlyUpdatedDocIds.delete(docId), 10000);
 
                 closeModal('modal-detail');
                 showToast('결재 상태가 저장되었습니다.', 'success');
