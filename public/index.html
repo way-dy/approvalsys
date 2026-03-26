@@ -628,19 +628,41 @@
             }
 
             try {
-                // [핵심] drafts_index (경량) 조회 - content/attachments 없어서 300건도 빠름
-                const q = query(collection(db, 'drafts_index'), orderBy('createdAt', 'desc'), limit(300));
-                const querySnapshot = forceServer ? await getDocsFromServer(q) : await getDocs(q);
-                let drafts = [];
-                querySnapshot.forEach((docSnap) => { drafts.push({ id: docSnap.id, ...docSnap.data() }); });
+                // [핵심] drafts_index (경량) + drafts (원본) 병렬 조회 후 병합
+                const indexQ = query(collection(db, 'drafts_index'), orderBy('createdAt', 'desc'), limit(500));
+                const draftsQ = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(500));
 
-                // drafts_index 없는 구버전 문서 대비: 결과가 비어있으면 기존 drafts로 폴백
-                if (drafts.length === 0 && !forceServer) {
-                    const fallbackQ = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(50));
-                    const fallbackSnap = await getDocs(fallbackQ);
-                    fallbackSnap.forEach((docSnap) => { drafts.push({ id: docSnap.id, ...docSnap.data() }); });
-                }
-                
+                const [indexSnap, draftsSnap] = await Promise.all([
+                    (forceServer ? getDocsFromServer(indexQ) : getDocs(indexQ)).catch(() => ({ forEach: () => {} })),
+                    (forceServer ? getDocsFromServer(draftsQ) : getDocs(draftsQ)).catch(() => ({ forEach: () => {} }))
+                ]);
+
+                // 1단계: drafts_index 결과 수집
+                const indexMap = new Map();
+                indexSnap.forEach((docSnap) => {
+                    const d = { id: docSnap.id, ...docSnap.data() };
+                    indexMap.set(d.docId || d.id, d);
+                });
+
+                // 2단계: drafts에서 drafts_index에 없는 문서 보충
+                const missingDocs = [];
+                draftsSnap.forEach((docSnap) => {
+                    const d = { id: docSnap.id, ...docSnap.data() };
+                    const key = d.docId || d.id;
+                    if (!indexMap.has(key)) {
+                        // content/attachments 제거한 경량 버전으로 리스트에 추가
+                        const lightweight = { ...d };
+                        delete lightweight.content;
+                        delete lightweight.attachments;
+                        indexMap.set(key, lightweight);
+                        missingDocs.push(d);
+                    }
+                });
+
+                // 3단계: 병합 결과를 최신순 정렬
+                let drafts = Array.from(indexMap.values());
+                drafts.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+
                 allFetchedData = drafts.map(serverDoc => {
                     // ★ 최근 결재 처리한 문서는 draftCache(Optimistic) 데이터 유지
                     if (recentlyUpdatedDocIds.has(serverDoc.docId) && draftCache[serverDoc.docId]) {
@@ -650,6 +672,14 @@
                 }); 
                 saveToCache(CACHE_KEYS.DRAFTS, allFetchedData);
                 renderWithFilter(listType || getActiveTabTarget());
+
+                // 4단계: 누락 문서 drafts_index 자동 복구 (fire-and-forget)
+                if (missingDocs.length > 0) {
+                    console.log(`[자동복구] drafts_index 누락 ${missingDocs.length}건 복구 시작`);
+                    for (const d of missingDocs) {
+                        saveIndexDoc(d).catch(() => {});
+                    }
+                }
 
             } catch (error) {
                 console.error(error);
