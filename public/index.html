@@ -1770,6 +1770,7 @@
                 document.getElementById('admin-approver2-email').value = draft.approver2Email || '';
                 document.getElementById('admin-approval2-status').value = draft.approval2Status || '';
                 document.getElementById('admin-approval2-comment').value = draft.approval2Comment || '';
+                document.getElementById('admin-payment-date').value = draft.paymentDate || '';
             } else {
                 adminPanel.classList.add('hidden');
             }
@@ -1789,6 +1790,7 @@
             const appr2Email   = document.getElementById('admin-approver2-email').value;
             const appr2Status  = document.getElementById('admin-approval2-status').value;
             const appr2Comment = document.getElementById('admin-approval2-comment').value.trim();
+            const adminPaymentDate = document.getElementById('admin-payment-date').value || null;
 
             const updateData = {
                 approver1Email:   appr1Email,
@@ -1799,6 +1801,7 @@
                 approver2Name:    getUserNameByEmail(appr2Email),
                 approval2Status:  appr2Status  || null,
                 approval2Comment: appr2Comment || null,
+                paymentDate:      adminPaymentDate,
                 // 2차 결재 완료로 변경 시 finalApprovalDate 자동 설정
                 finalApprovalDate: (appr2Status === '결재')
                     ? (draft.finalApprovalDate || new Date().toISOString())
@@ -2299,6 +2302,22 @@
                             <div>
                                 <label class="text-xs font-bold text-gray-500 mb-1 block">2차 의견</label>
                                 <input type="text" id="admin-approval2-comment" placeholder="의견 (선택)" class="w-full border border-gray-200 rounded-lg p-2 text-sm bg-white focus:ring-2 focus:ring-purple-400 focus:outline-none">
+                            </div>
+                        </div>
+
+                        <!-- 관리자 지급일자 수정 -->
+                        <div class="border-t border-purple-100 pt-3">
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                                <div class="md:col-span-1">
+                                    <label class="text-xs font-bold text-gray-500 mb-1 block">
+                                        <i class="bi bi-calendar2-check text-purple-500 mr-1"></i>지급일자 (관리자 수정)
+                                    </label>
+                                    <input type="date" id="admin-payment-date"
+                                        class="w-full border border-gray-200 rounded-lg p-2 text-sm bg-white focus:ring-2 focus:ring-purple-400 focus:outline-none">
+                                </div>
+                                <div class="md:col-span-2 text-xs text-gray-400 self-end pb-2">
+                                    비워두면 지급일 미입력 상태로 저장됩니다.
+                                </div>
                             </div>
                         </div>
 
