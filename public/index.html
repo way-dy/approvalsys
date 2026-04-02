@@ -128,6 +128,9 @@
         // ── Optimistic Update 보호: 최근 결재 처리한 문서 ID ──
         let recentlyUpdatedDocIds = new Set();
 
+        // ── 첨부파일 URL 맵: onclick 속성에 URL 직접 삽입 방지 + CORS 우회용 ──
+        let _attachmentMap = {};
+
         // =========================================================================
         // [최적화 핵심] 멀티 레이어 캐시 시스템
         // =========================================================================
@@ -1697,16 +1700,22 @@
             filesContainer.innerHTML = '';
             if (draft.attachments) {
                 const isConfidentialDoc = draft.category === '대외비';
-                draft.attachments.forEach(file => {
+                draft.attachments.forEach((file, idx) => {
+                    const fileKey = `${draft.docId}_${idx}`;
+                    _attachmentMap[fileKey] = { url: file.url, name: file.name };
+
                     if (isConfidentialDoc) {
-                        // 대외비 첨부파일: 클릭 시 로그 기록 후 열기
                         filesContainer.innerHTML += `<button
-                            onclick="openConfidentialFile('${draft.docId}', '${file.name.replace(/'/g,"\'")}', '${file.url.replace(/'/g,"\'")}')"
+                            onclick="openConfidentialFile('${draft.docId}', '${fileKey}')"
                             class="inline-flex items-center px-3 py-1 rounded-full border border-red-200 bg-red-50 text-xs text-red-700 hover:bg-red-100 mr-2 mb-2 cursor-pointer">
                             <i class="bi bi-shield-lock-fill mr-1"></i> ${file.name}
                         </button>`;
                     } else {
-                        filesContainer.innerHTML += `<a href="${file.url}" target="_blank" class="inline-flex items-center px-3 py-1 rounded-full border border-gray-300 bg-gray-50 text-xs text-gray-700 hover:bg-gray-100 mr-2 mb-2"><i class="bi bi-paperclip mr-1"></i> ${file.name}</a>`;
+                        filesContainer.innerHTML += `<button
+                            onclick="openAttachmentFile('${fileKey}')"
+                            class="inline-flex items-center px-3 py-1 rounded-full border border-gray-300 bg-gray-50 text-xs text-gray-700 hover:bg-gray-100 mr-2 mb-2 cursor-pointer">
+                            <i class="bi bi-paperclip mr-1"></i> ${file.name}
+                        </button>`;
                     }
                 });
             }
@@ -1842,10 +1851,12 @@
         };
 
         // 대외비 첨부파일 열기 — 파일별 로그 기록
-        window.openConfidentialFile = async (docId, fileName, url) => {
+        window.openConfidentialFile = async (docId, fileKey) => {
+            const entry = _attachmentMap[fileKey];
+            if (!entry) { showToast('파일 정보를 찾을 수 없습니다.', true); return; }
+            const { url, name } = entry;
             const draft = draftCache[docId];
             try {
-                // 파일 열람 로그 (파일명 포함)
                 await setDoc(doc(collection(db, 'accessLogs')), {
                     docId:       docId,
                     docTitle:    draft ? draft.title : docId,
@@ -1853,12 +1864,50 @@
                     viewer:      currentUser.email,
                     viewerName:  currentUser.name,
                     type:        'file_open',
-                    fileName:    fileName,
+                    fileName:    name,
                     authMethod:  'google_reauth',
                     timestamp:   new Date().toISOString()
                 });
             } catch(e) { console.warn('[fileLog] 기록 실패:', e); }
-            window.open(url, '_blank');
+            await _doOpenAttachment(url, name);
+        };
+
+        // ── 첨부파일 열기 공통 헬퍼: fetch → Blob URL (Chrome PDF CORS 우회) ──
+        async function _doOpenAttachment(url, name) {
+            try {
+                showToast('파일 불러오는 중...');
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const blob = await res.blob();
+                const blobUrl = URL.createObjectURL(blob);
+
+                const ext = (name.split('.').pop() || '').toLowerCase();
+                const viewInTab = ['pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(ext);
+
+                if (viewInTab) {
+                    window.open(blobUrl, '_blank');
+                } else {
+                    const a = document.createElement('a');
+                    a.href = blobUrl;
+                    a.download = name;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                }
+                // 1분 후 Blob URL 해제
+                setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+            } catch(e) {
+                console.warn('[openAttachment] fetch 실패, 직접 URL로 폴백:', e);
+                showToast('직접 링크로 열기를 시도합니다.', false);
+                window.open(url, '_blank');
+            }
+        }
+
+        // 일반 첨부파일 열기
+        window.openAttachmentFile = async (fileKey) => {
+            const entry = _attachmentMap[fileKey];
+            if (!entry) { showToast('파일 정보를 찾을 수 없습니다.', true); return; }
+            await _doOpenAttachment(entry.url, entry.name);
         };
 
         window.editDraft = (docId) => {
@@ -1905,12 +1954,15 @@
             if (!container) return;
             container.innerHTML = '';
             currentAttachments.forEach((file, index) => {
+                const fileKey = `edit_${index}`;
+                _attachmentMap[fileKey] = { url: file.url, name: file.name };
+
                 const item = document.createElement('div');
                 item.className = 'flex items-center justify-between bg-blue-50 border border-blue-100 rounded px-3 py-2 mb-2 text-sm text-blue-800';
                 item.innerHTML = `
                     <div class="flex items-center gap-2 overflow-hidden">
                         <i class="bi bi-paperclip shrink-0"></i>
-                        <a href="${file.url}" target="_blank" class="truncate hover:underline">${file.name}</a>
+                        <button onclick="openAttachmentFile('${fileKey}')" class="truncate hover:underline text-left text-blue-800">${file.name}</button>
                     </div>
                     <button type="button" onclick="removeAttachment(${index})" class="text-red-500 hover:text-red-700 ml-2 p-1">
                         <i class="bi bi-x-lg"></i>
