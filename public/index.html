@@ -543,6 +543,9 @@
                 clearTimeout(searchTimeout);
                 searchTimeout = setTimeout(() => runSearch(e.target.value), 150);
             });
+
+            // 전체기안 조회 버튼
+            document.getElementById('btn-all-drafts-search').addEventListener('click', () => loadAllGlobal());
             
             const sidebar = document.getElementById('main-sidebar');
             const overlay = document.getElementById('sidebar-overlay');
@@ -963,7 +966,15 @@
             if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split animate-spin"></i> 검색 중...'; }
 
             try {
-                globalSearchResults = await fetchGlobalSearchResults(globalSearchKeyword, newLimit);
+                if (globalSearchKeyword === '__ALL__') {
+                    // 전체기안 조회 페이징
+                    const snap = await getDocs(
+                        query(collection(db, 'drafts_index'), orderBy('createdAt', 'desc'), limit(newLimit))
+                    );
+                    globalSearchResults = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                } else {
+                    globalSearchResults = await fetchGlobalSearchResults(globalSearchKeyword, newLimit);
+                }
                 filteredDisplayData = globalSearchResults.filter(d => filterDraft(d, getActiveTabTarget()));
                 renderPaginatedItems();
                 renderGlobalSearchBanner();
@@ -1015,8 +1026,37 @@
         };
 
         // =========================================================================
-        // [최적화] 렌더링 성능 개선 - DocumentFragment 사용
+        // 전체기안 조회 (검색어 없이 drafts_index 전체 최신순)
         // =========================================================================
+        window.loadAllGlobal = async function() {
+            isGlobalSearchMode = true;
+            globalSearchKeyword = '__ALL__';
+            globalSearchPage = 1;
+
+            const hintEl = document.getElementById('global-search-hint');
+            if (hintEl) {
+                hintEl.innerHTML = `<div class="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-700">
+                    <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                    전체 기안 조회 중...
+                </div>`;
+                hintEl.classList.remove('hidden');
+            }
+
+            try {
+                const snap = await getDocs(
+                    query(collection(db, 'drafts_index'), orderBy('createdAt', 'desc'), limit(GLOBAL_PAGE_SIZE))
+                );
+                globalSearchResults = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                filteredDisplayData = globalSearchResults.filter(d => filterDraft(d, getActiveTabTarget()));
+                currentPage = 1;
+                renderPaginatedItems();
+                renderGlobalSearchBanner();
+            } catch(e) {
+                console.error('전체기안 조회 오류:', e);
+                showToast('전체기안 조회 오류가 발생했습니다.', true);
+                if (hintEl) hintEl.classList.add('hidden');
+            }
+        };
         function renderPaginatedItems() {
             const container = document.getElementById('draft-list-container');
 
@@ -2234,9 +2274,16 @@
             </header>
 
             <div class="p-4 md:p-8 flex-1 overflow-y-auto">
-                <div class="relative mb-2">
-                    <i class="bi bi-search absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"></i>
-                    <input id="search-input" type="text" class="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 shadow-sm focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm bg-white" placeholder="제목, 기안자, 문서번호 검색...">
+                <div class="flex items-center gap-2 mb-2">
+                    <div class="relative flex-1">
+                        <i class="bi bi-search absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                        <input id="search-input" type="text" class="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 shadow-sm focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm bg-white" placeholder="제목, 기안자, 문서번호 검색...">
+                    </div>
+                    <button id="btn-all-drafts-search"
+                        class="shrink-0 flex items-center gap-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold px-3 py-3 rounded-xl shadow transition whitespace-nowrap">
+                        <i class="bi bi-database-search"></i>
+                        <span class="hidden sm:inline">전체기안 조회</span>
+                    </button>
                 </div>
 
                 <!-- 전체 기간 검색 힌트/결과 배너 -->

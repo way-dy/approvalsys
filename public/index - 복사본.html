@@ -75,7 +75,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-        import { getFirestore, collection, doc, getDoc, getDocs, getDocsFromServer, setDoc, updateDoc, query, where, orderBy, runTransaction, serverTimestamp, limit } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { initializeFirestore, persistentLocalCache, collection, doc, getDoc, getDocs, getDocsFromServer, setDoc, updateDoc, query, where, orderBy, runTransaction, serverTimestamp, limit } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
         import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js";
 
         // =========================================================================
@@ -96,7 +96,8 @@
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
-        const db = getFirestore(app);
+        // [최적화] IndexedDB 오프라인 영속 캐시 활성화 — 재방문 시 즉시 데이터 표시
+        const db = initializeFirestore(app, { localCache: persistentLocalCache() });
         const storage = getStorage(app);
         const provider = new GoogleAuthProvider();
 
@@ -141,9 +142,9 @@
             LAST_TAB: 'dy_last_tab_v2'      // 마지막 탭 기억
         };
         const CACHE_EXPIRY_META = 1000 * 60 * 60 * 2;   // 메타: 2시간
-        const CACHE_EXPIRY_DRAFTS = 1000 * 60 * 30;     // 기안: 30분 (15분→30분, optimistic update로 정합성 보장)
+        const CACHE_EXPIRY_DRAFTS = 1000 * 60 * 60;     // 기안: 60분 (IndexedDB 캐시 병행으로 실질 TTL 연장)
         const CACHE_EXPIRY_USER = 1000 * 60 * 60 * 24;  // 유저: 24시간
-        const BG_UPDATE_THRESHOLD = 1000 * 60 * 3;      // 캐시 나이 3분 이상일 때만 백그라운드 갱신
+        const BG_UPDATE_THRESHOLD = 1000 * 60 * 2;      // 캐시 나이 2분 이상일 때만 백그라운드 갱신
 
         // =========================================================================
         // 캐시 도우미 함수
@@ -186,11 +187,19 @@
         }
 
         // =========================================================================
-        // [최적화 핵심] 스켈레톤 UI 함수
+        // [최적화 핵심] 스켈레톤 UI + 로딩 진행률 표시
         // =========================================================================
-        function showSkeletonUI() {
+        function showSkeletonUI(statusText = '데이터를 불러오는 중입니다...') {
             const container = document.getElementById('draft-list-container');
             if (!container) return;
+
+            // 진행률 바 표시
+            const progressArea = document.getElementById('loading-progress-area');
+            if (progressArea) {
+                progressArea.classList.remove('hidden');
+                document.getElementById('loading-stage-text').textContent = statusText;
+            }
+
             let html = '';
             for (let i = 0; i < 5; i++) {
                 html += `
@@ -209,6 +218,24 @@
             container.innerHTML = html;
         }
 
+        // 로딩 진행률 업데이트 헬퍼
+        function setLoadingProgress(pct, stageText) {
+            const wrap  = document.getElementById('loading-progress-area');
+            const fill  = document.getElementById('loading-pct-fill');
+            const txt   = document.getElementById('loading-pct-text');
+            const stage = document.getElementById('loading-stage-text');
+            if (!wrap || !fill) return;
+
+            wrap.classList.remove('hidden');
+            fill.style.width   = pct + '%';
+            txt.textContent    = pct + '%';
+            stage.textContent  = stageText;
+
+            if (pct >= 100) {
+                setTimeout(() => wrap.classList.add('hidden'), 500);
+            }
+        }
+
         // =========================================================================
         // [최적화 핵심] 초고속 초기화 - 캐시 우선 병렬 로딩
         // =========================================================================
@@ -222,9 +249,19 @@
             if (cachedUser) {
                 // 캐시된 유저로 즉시 UI 렌더링 (Firebase auth 완료 전)
                 applyUserAndShowApp(cachedUser, true);
+                setLoadingProgress(15, '인증 확인 중...');
             }
 
+            // [최적화] auth 타임아웃: 8초 내 응답 없으면 에러 안내 (무한 스켈레톤 방지)
+            const authTimeout = setTimeout(() => {
+                if (!currentUser) {
+                    toggleView('login-view');
+                    showToast('서버 응답이 없습니다. 잠시 후 다시 시도해주세요.', true);
+                }
+            }, 8000);
+
             onAuthStateChanged(auth, async (user) => {
+                clearTimeout(authTimeout);
                 if (user) {
                     // [최적화] 메타 + 기안 데이터를 동시에 로드
                     const hasCachedUI = !!cachedUser;
@@ -232,7 +269,8 @@
                     if (!hasCachedUI) {
                         // 캐시 없을 때만 스켈레톤 표시
                         toggleView('app-view');
-                        showSkeletonUI();
+                        setLoadingProgress(10, '서버에 연결되었습니다...');
+                        showSkeletonUI('조직 정보 로드 중...');
                     }
 
                     // [핵심] 메타와 기안 데이터를 병렬로 로드
@@ -258,11 +296,14 @@
             let metaFromCache = false;
             let draftsFromCache = false;
 
+            setLoadingProgress(20, '조직 정보 확인 중...');
+
             // 캐시된 메타가 있으면 즉시 적용
             if (cachedMeta) {
                 userList = cachedMeta.userList || [];
                 repairMap = cachedMeta.repairMap || {};
                 metaFromCache = true;
+                setLoadingProgress(40, '조직 정보 로드 완료');
             }
 
             // 유저 매칭 (캐시된 메타로 시도)
@@ -298,6 +339,7 @@
             if (cachedDrafts && cachedDrafts.length > 0) {
                 allFetchedData = cachedDrafts;
                 draftsFromCache = true;
+                setLoadingProgress(65, '캐시 데이터 로드 완료');
             }
 
             // UI 즉시 표시
@@ -313,12 +355,13 @@
             if (draftsFromCache) {
                 const lastTab = getInitialTab();
                 renderWithFilter(lastTab);
+                setLoadingProgress(85, '화면 구성 중...');
             }
 
             // 초기 탭 클릭
             clickInitialTab();
 
-            // 2단계: [백그라운드] 캐시가 3분 이상 됐을 때만 DB 갱신 (불필요한 Firestore 호출 방지)
+            // 2단계: [백그라운드] 캐시가 2분 이상 됐을 때만 DB 갱신 (불필요한 Firestore 호출 방지)
             const draftsAge = getCacheAge(CACHE_KEYS.DRAFTS);
             const metaAge = getCacheAge(CACHE_KEYS.META);
             const needsBgUpdate = draftsAge > BG_UPDATE_THRESHOLD || metaAge > BG_UPDATE_THRESHOLD;
@@ -338,7 +381,9 @@
 
             // 캐시가 하나도 없었으면 DB에서 직접 로드
             if (!metaFromCache) {
+                setLoadingProgress(30, '서버에서 조직 정보 로드 중...');
                 await fetchMetaFromDB();
+                setLoadingProgress(50, '조직 정보 로드 완료');
                 // 유저 재매칭
                 const matchedUser = userList.find(u => u.email === firebaseUser.email);
                 if (matchedUser) {
@@ -369,10 +414,12 @@
             }
 
             if (!draftsFromCache) {
+                setLoadingProgress(55, '문서 목록 수신 중...');
                 const activeTab = getActiveTabTarget();
                 await loadDraftsFromDB(activeTab, true);
             }
 
+            setLoadingProgress(100, '완료');
             hideLoading();
         }
 
@@ -625,20 +672,20 @@
 
         async function loadDraftsFromDB(listType, showSpinner = false, forceServer = false) {
             const listContainer = document.getElementById('draft-list-container');
+            const INITIAL_LIMIT = 50; // [최적화] 500 → 50건으로 축소 (화면 표시는 10건/페이지)
             
             if (showSpinner && allFetchedData.length === 0) {
-                showSkeletonUI();
+                showSkeletonUI('문서 목록 수신 중...');
+                setLoadingProgress(55, '문서 목록 수신 중...');
             }
 
             try {
-                // [핵심] drafts_index (경량) + drafts (원본) 병렬 조회 후 병합
-                const indexQ = query(collection(db, 'drafts_index'), orderBy('createdAt', 'desc'), limit(500));
-                const draftsQ = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(500));
+                // [최적화 핵심] drafts_index 단독 우선 로드 (경량 데이터)
+                const indexQ = query(collection(db, 'drafts_index'), orderBy('createdAt', 'desc'), limit(INITIAL_LIMIT));
+                const indexSnap = await (forceServer ? getDocsFromServer(indexQ) : getDocs(indexQ))
+                    .catch(() => ({ forEach: () => {}, size: 0 }));
 
-                const [indexSnap, draftsSnap] = await Promise.all([
-                    (forceServer ? getDocsFromServer(indexQ) : getDocs(indexQ)).catch(() => ({ forEach: () => {} })),
-                    (forceServer ? getDocsFromServer(draftsQ) : getDocs(draftsQ)).catch(() => ({ forEach: () => {} }))
-                ]);
+                setLoadingProgress(75, '데이터 처리 중...');
 
                 // 1단계: drafts_index 결과 수집
                 const indexMap = new Map();
@@ -647,13 +694,47 @@
                     indexMap.set(d.docId || d.id, d);
                 });
 
-                // 2단계: drafts에서 drafts_index에 없는 문서 보충
+                // 2단계: 즉시 렌더링 (index 데이터만으로)
+                let drafts = Array.from(indexMap.values());
+                drafts.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+
+                allFetchedData = drafts.map(serverDoc => {
+                    if (recentlyUpdatedDocIds.has(serverDoc.docId) && draftCache[serverDoc.docId]) {
+                        return draftCache[serverDoc.docId];
+                    }
+                    return serverDoc;
+                });
+                saveToCache(CACHE_KEYS.DRAFTS, allFetchedData);
+                setLoadingProgress(90, '화면 구성 중...');
+                renderWithFilter(listType || getActiveTabTarget());
+                setLoadingProgress(100, '완료');
+
+                // 3단계: [백그라운드] drafts_index에 INITIAL_LIMIT 미만이면 drafts로 보충
+                // (drafts_index에 인덱싱 안 된 오래된 문서 보완)
+                if (indexMap.size < INITIAL_LIMIT) {
+                    setTimeout(() => _supplementFromDrafts(indexMap, forceServer, listType), 500);
+                }
+
+            } catch (error) {
+                console.error(error);
+                if (showSpinner && allFetchedData.length === 0) {
+                    listContainer.innerHTML = `<div class="text-center p-10 text-gray-500">데이터 로드 실패<br>${error.message}</div>`;
+                }
+            }
+        }
+
+        // [백그라운드 보충] drafts 컬렉션에서 누락 문서 가져와 병합
+        async function _supplementFromDrafts(indexMap, forceServer, listType) {
+            try {
+                const draftsQ = query(collection(db, 'drafts'), orderBy('createdAt', 'desc'), limit(50));
+                const draftsSnap = await (forceServer ? getDocsFromServer(draftsQ) : getDocs(draftsQ))
+                    .catch(() => ({ forEach: () => {} }));
+
                 const missingDocs = [];
                 draftsSnap.forEach((docSnap) => {
                     const d = { id: docSnap.id, ...docSnap.data() };
                     const key = d.docId || d.id;
                     if (!indexMap.has(key)) {
-                        // content/attachments 제거한 경량 버전으로 리스트에 추가
                         const lightweight = { ...d };
                         delete lightweight.content;
                         delete lightweight.attachments;
@@ -662,33 +743,27 @@
                     }
                 });
 
-                // 3단계: 병합 결과를 최신순 정렬
+                if (missingDocs.length === 0) return; // 누락 없으면 종료
+
+                // 병합 후 재정렬 및 재렌더링
                 let drafts = Array.from(indexMap.values());
                 drafts.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-
                 allFetchedData = drafts.map(serverDoc => {
-                    // ★ 최근 결재 처리한 문서는 draftCache(Optimistic) 데이터 유지
                     if (recentlyUpdatedDocIds.has(serverDoc.docId) && draftCache[serverDoc.docId]) {
                         return draftCache[serverDoc.docId];
                     }
                     return serverDoc;
-                }); 
+                });
                 saveToCache(CACHE_KEYS.DRAFTS, allFetchedData);
                 renderWithFilter(listType || getActiveTabTarget());
 
-                // 4단계: 누락 문서 drafts_index 자동 복구 (fire-and-forget)
-                if (missingDocs.length > 0) {
-                    console.log(`[자동복구] drafts_index 누락 ${missingDocs.length}건 복구 시작`);
-                    for (const d of missingDocs) {
-                        saveIndexDoc(d).catch(() => {});
-                    }
+                // drafts_index 자동 복구 (fire-and-forget)
+                console.log(`[자동복구] drafts_index 누락 ${missingDocs.length}건 복구 시작`);
+                for (const d of missingDocs) {
+                    saveIndexDoc(d).catch(() => {});
                 }
-
-            } catch (error) {
-                console.error(error);
-                if (showSpinner && allFetchedData.length === 0) {
-                    listContainer.innerHTML = `<div class="text-center p-10 text-gray-500">데이터 로드 실패<br>${error.message}</div>`;
-                }
+            } catch(e) {
+                console.warn('[_supplementFromDrafts] 백그라운드 보충 실패:', e);
             }
         }
 
@@ -2166,6 +2241,22 @@
 
                 <!-- 전체 기간 검색 힌트/결과 배너 -->
                 <div id="global-search-hint" class="hidden mb-4"></div>
+
+                <!-- [최적화] 로딩 진행률 표시 바 -->
+                <div id="loading-progress-area" class="hidden mb-3">
+                    <div class="flex justify-between items-center text-xs text-gray-400 mb-1.5 px-0.5">
+                        <span id="loading-stage-text" class="flex items-center gap-1.5">
+                            <span class="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>
+                            데이터를 불러오는 중입니다...
+                        </span>
+                        <span id="loading-pct-text" class="font-mono font-bold text-blue-500">0%</span>
+                    </div>
+                    <div class="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                        <div id="loading-pct-fill"
+                             class="bg-gradient-to-r from-blue-500 to-blue-400 h-1.5 rounded-full transition-all duration-400 ease-out"
+                             style="width:0%"></div>
+                    </div>
+                </div>
 
                 <div id="draft-list-container">
                     </div>
