@@ -124,7 +124,7 @@
         let globalSearchKeyword = "";
         let globalSearchResults = [];
         let globalSearchPage = 1;
-        const GLOBAL_PAGE_SIZE = 50;
+        const GLOBAL_PAGE_SIZE = 200;
 
         // ── Optimistic Update 보호: 최근 결재 처리한 문서 ID ──
         let recentlyUpdatedDocIds = new Set();
@@ -537,11 +537,19 @@
                 loadDraftsFromDB(activeTab, true, true);
             });
 
-            // [최적화] 검색 디바운스 적용
+            // [최적화] 검색 디바운스 적용 — 로컬 즉시 + 자동 Firestore 검색
             let searchTimeout;
+            let globalSearchTimeout;
             document.getElementById('search-input').addEventListener('keyup', (e) => {
                 clearTimeout(searchTimeout);
+                clearTimeout(globalSearchTimeout);
+                // 1단계: 로컬 즉시 검색 (150ms)
                 searchTimeout = setTimeout(() => runSearch(e.target.value), 150);
+                // 2단계: 자동 Firestore 전체 검색 (500ms) — 별도 버튼 불필요
+                const val = e.target.value.trim();
+                if (val.length >= 2) {
+                    globalSearchTimeout = setTimeout(() => autoGlobalSearch(val), 500);
+                }
             });
 
             // 전체기안 조회 버튼
@@ -781,8 +789,16 @@
             const activeTab = getActiveTabTarget();
             const hintEl = document.getElementById('global-search-hint');
 
-            // 전체 검색 모드 해제 시 로컬 데이터로 복귀
+            // 검색어 비었을 때 처리
             if (!term) {
+                // 전체 목록(__ALL__) 모드 중이면 → 전체 목록 유지 (검색어만 지움)
+                if (isGlobalSearchMode && globalSearchKeyword === '__ALL__' && globalSearchResults.length > 0) {
+                    filteredDisplayData = globalSearchResults.filter(d => filterDraft(d, activeTab));
+                    renderPaginatedItems();
+                    renderGlobalSearchBanner();
+                    return;
+                }
+                // 그 외: 로컬 데이터로 복귀
                 isGlobalSearchMode = false;
                 globalSearchKeyword = '';
                 globalSearchResults = [];
@@ -792,14 +808,51 @@
                 return;
             }
 
-            // 전체 검색 모드 중이면 globalSearchResults 표시 (권한 필터 적용)
+            // ── 기안번호 패턴 감지 (YYYY-NNNN) → 즉시 Firestore 직접 조회 ──
+            const docIdPattern = /^\d{4}-\d{1,4}$/;
+            if (docIdPattern.test(term)) {
+                instantDocIdSearch(term, activeTab);
+                return;
+            }
+
+            // 전체 검색 완료 결과가 있고 동일 키워드면 재사용
             if (isGlobalSearchMode && globalSearchKeyword === term) {
                 filteredDisplayData = globalSearchResults.filter(d => filterDraft(d, activeTab));
                 renderPaginatedItems();
                 return;
             }
 
-            // 로컬(30건) 검색 — filterDraft 권한 체크 필수 적용
+            // ── [핵심 수정] 전체 목록 모드(__ALL__)에서 키워드 입력 시 ──
+            // → globalSearchResults(200건) 안에서 즉시 필터링 (로컬 50건이 아님)
+            if (isGlobalSearchMode && globalSearchKeyword === '__ALL__' && globalSearchResults.length > 0) {
+                filteredDisplayData = globalSearchResults.filter(draft => {
+                    if (!filterDraft(draft, activeTab)) return false;
+                    return (draft.title && draft.title.toLowerCase().includes(term)) ||
+                           (draft.drafter && draft.drafter.toLowerCase().includes(term)) ||
+                           (draft.docId && draft.docId.toLowerCase().includes(term)) ||
+                           (draft.corporation && draft.corporation.toLowerCase().includes(term));
+                });
+                currentPage = 1;
+
+                if (hintEl) {
+                    hintEl.classList.remove('hidden');
+                    hintEl.innerHTML = `
+                        <div class="flex items-center justify-between gap-3 px-4 py-2 bg-blue-50 border border-blue-200 rounded-xl text-sm">
+                            <span class="text-blue-700">
+                                <i class="bi bi-funnel mr-1"></i>
+                                전체 목록 ${globalSearchResults.length}건 중 <strong>${filteredDisplayData.length}건</strong> 일치
+                            </span>
+                            <button onclick="exitGlobalSearch()"
+                                class="text-gray-400 hover:text-gray-600 text-xs px-2 py-1 rounded hover:bg-gray-100 transition">
+                                <i class="bi bi-x"></i> 닫기
+                            </button>
+                        </div>`;
+                }
+                renderPaginatedItems();
+                return;
+            }
+
+            // 일반 모드: 로컬(50건) 검색 — filterDraft 권한 체크 필수 적용
             filteredDisplayData = allFetchedData.filter(draft => {
                 if (!filterDraft(draft, activeTab)) return false;
                 const matchesKeyword = (draft.title && draft.title.toLowerCase().includes(term)) ||
@@ -809,22 +862,168 @@
                 return matchesKeyword;
             });
 
-            // 로컬 결과 힌트 표시 (항상 "전체 검색" 버튼 노출)
+            // 로컬 결과 표시 (자동 Firestore 검색이 500ms 후 실행되므로 별도 버튼 최소화)
             if (hintEl) {
                 hintEl.classList.remove('hidden');
                 hintEl.innerHTML = `
-                    <div class="flex items-center justify-between gap-3 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-sm">
-                        <span class="text-amber-700">
+                    <div class="flex items-center gap-3 px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm">
+                        <span class="text-gray-500">
                             <i class="bi bi-clock-history mr-1"></i>
-                            최근 50건 기준 검색 결과 <strong>${filteredDisplayData.length}건</strong>
+                            최근 데이터 <strong>${filteredDisplayData.length}건</strong>
                         </span>
-                        <button onclick="searchGlobal('${term.replace(/'/g, "\'")}')"
-                            class="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow transition whitespace-nowrap">
-                            <i class="bi bi-search"></i> 전체 기간 검색
-                        </button>
+                        <span class="text-gray-300">|</span>
+                        <span class="text-blue-500 text-xs flex items-center gap-1">
+                            <div class="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-500"></div>
+                            전체 자동 검색 중...
+                        </span>
                     </div>`;
             }
             renderPaginatedItems();
+        }
+
+        // =========================================================================
+        // [신규] 기안번호 즉시 검색 (YYYY-NNNN 패턴 → Firestore docId 직접 조회)
+        // =========================================================================
+        async function instantDocIdSearch(docIdInput, activeTab) {
+            const hintEl = document.getElementById('global-search-hint');
+            
+            // 먼저 로컬 캐시에서 찾기
+            const localMatch = allFetchedData.find(d => d.docId && d.docId.toLowerCase() === docIdInput.toLowerCase());
+            if (localMatch && filterDraft(localMatch, activeTab)) {
+                filteredDisplayData = [localMatch];
+                if (hintEl) {
+                    hintEl.classList.remove('hidden');
+                    hintEl.innerHTML = `
+                        <div class="flex items-center gap-2 px-4 py-2.5 bg-green-50 border border-green-200 rounded-xl text-sm text-green-700">
+                            <i class="bi bi-check-circle-fill"></i>
+                            문서번호 <strong>${docIdInput}</strong> 검색 완료
+                        </div>`;
+                }
+                renderPaginatedItems();
+                return;
+            }
+
+            // Firestore에서 직접 조회
+            if (hintEl) {
+                hintEl.classList.remove('hidden');
+                hintEl.innerHTML = `
+                    <div class="flex items-center gap-2 px-4 py-2 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-600">
+                        <div class="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-blue-600"></div>
+                        문서번호 <strong>${docIdInput}</strong> 조회 중...
+                    </div>`;
+            }
+
+            try {
+                // 입력된 번호를 정규화 (예: 2024-32 → 2024-0032)
+                const parts = docIdInput.split('-');
+                const normalizedId = parts[0] + '-' + parts[1].padStart(4, '0');
+                
+                // drafts 컬렉션에서 docId 정확 매칭 (1건)
+                const snap = await getDocs(query(collection(db, 'drafts'), where('docId', '==', normalizedId)));
+                const results = [];
+                snap.forEach(d => results.push({ id: d.id, ...d.data() }));
+
+                // 정규화 전 원본으로도 시도
+                if (results.length === 0 && normalizedId !== docIdInput) {
+                    const snap2 = await getDocs(query(collection(db, 'drafts'), where('docId', '==', docIdInput)));
+                    snap2.forEach(d => results.push({ id: d.id, ...d.data() }));
+                }
+
+                if (results.length > 0) {
+                    isGlobalSearchMode = true;
+                    globalSearchKeyword = docIdInput;
+                    globalSearchResults = results;
+                    results.forEach(d => { if (d.docId) draftCache[d.docId] = d; });
+                    filteredDisplayData = results.filter(d => filterDraft(d, activeTab));
+                    currentPage = 1;
+                    
+                    if (hintEl) {
+                        hintEl.innerHTML = `
+                            <div class="flex items-center justify-between gap-3 px-4 py-2.5 bg-green-50 border border-green-200 rounded-xl text-sm">
+                                <span class="text-green-700">
+                                    <i class="bi bi-check-circle-fill mr-1"></i>
+                                    문서번호 <strong>${normalizedId}</strong> 검색 완료 — ${results.length}건
+                                </span>
+                                <button onclick="exitGlobalSearch()"
+                                    class="text-gray-400 hover:text-gray-600 text-xs px-2 py-1 rounded hover:bg-gray-100 transition">
+                                    <i class="bi bi-x"></i> 닫기
+                                </button>
+                            </div>`;
+                    }
+                } else {
+                    filteredDisplayData = [];
+                    if (hintEl) {
+                        hintEl.innerHTML = `
+                            <div class="flex items-center gap-2 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-700">
+                                <i class="bi bi-exclamation-circle"></i>
+                                문서번호 <strong>${normalizedId}</strong>에 해당하는 기안을 찾지 못했습니다.
+                            </div>`;
+                    }
+                }
+                renderPaginatedItems();
+            } catch(e) {
+                console.error('기안번호 즉시 검색 오류:', e);
+                if (hintEl) hintEl.classList.add('hidden');
+            }
+        }
+
+        // =========================================================================
+        // [신규] 자동 전체 검색 — 검색어 입력 500ms 후 자동 실행
+        // =========================================================================
+        async function autoGlobalSearch(keyword) {
+            const term = keyword.trim();
+            if (!term || term.length < 2) return;
+            // 기안번호 패턴이면 instantDocIdSearch가 이미 처리
+            if (/^\d{4}-\d{1,4}$/.test(term)) return;
+            // 이미 동일 키워드로 전체 검색 완료 상태면 스킵
+            if (isGlobalSearchMode && globalSearchKeyword === term) return;
+            // 전체 목록(__ALL__) 모드에서는 이미 runSearch가 200건 내 필터링 중 → 스킵
+            if (isGlobalSearchMode && globalSearchKeyword === '__ALL__') return;
+
+            const hintEl = document.getElementById('global-search-hint');
+            
+            try {
+                const results = await fetchGlobalSearchResults(term, GLOBAL_PAGE_SIZE);
+                
+                // 검색 입력이 중간에 바뀌었으면 결과 무시
+                const currentInput = document.getElementById('search-input').value.trim();
+                if (currentInput !== keyword) return;
+
+                isGlobalSearchMode = true;
+                globalSearchKeyword = term;
+                globalSearchPage = 1;
+                globalSearchResults = results;
+                
+                const activeTab = getActiveTabTarget();
+                filteredDisplayData = results.filter(d => filterDraft(d, activeTab));
+                currentPage = 1;
+                renderPaginatedItems();
+
+                // 간결한 결과 배너
+                if (hintEl) {
+                    hintEl.classList.remove('hidden');
+                    hintEl.innerHTML = `
+                        <div class="flex items-center justify-between gap-3 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl text-sm">
+                            <span class="text-blue-700">
+                                <i class="bi bi-database-check mr-1"></i>
+                                전체 검색 결과 <strong>${results.length}건</strong>
+                                ${results.length >= GLOBAL_PAGE_SIZE ? '<span class="text-xs text-blue-400 ml-1">(더 있을 수 있음)</span>' : ''}
+                            </span>
+                            <div class="flex items-center gap-2">
+                                ${results.length >= GLOBAL_PAGE_SIZE ? `<button id="btn-load-more-global" onclick="loadMoreGlobalSearch()"
+                                    class="flex items-center gap-1 bg-white border border-blue-300 text-blue-600 hover:bg-blue-50 text-xs font-bold px-3 py-1.5 rounded-lg transition">
+                                    <i class="bi bi-plus-circle"></i> 더 보기
+                                </button>` : ''}
+                                <button onclick="exitGlobalSearch()"
+                                    class="text-gray-400 hover:text-gray-600 text-xs px-2 py-1 rounded hover:bg-gray-100 transition">
+                                    <i class="bi bi-x"></i> 닫기
+                                </button>
+                            </div>
+                        </div>`;
+                }
+            } catch(e) {
+                console.error('자동 전체 검색 오류:', e);
+            }
         }
 
         // =========================================================================
@@ -842,7 +1041,7 @@
             if (hintEl) {
                 hintEl.innerHTML = `<div class="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-700">
                     <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                    전체 기간 검색 중...
+                    전체 검색 중...
                 </div>`;
                 hintEl.classList.remove('hidden');
             }
@@ -963,11 +1162,10 @@
             const newLimit = GLOBAL_PAGE_SIZE * globalSearchPage;
 
             const btn = document.getElementById('btn-load-more-global');
-            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split animate-spin"></i> 검색 중...'; }
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split animate-spin"></i> 로드 중...'; }
 
             try {
                 if (globalSearchKeyword === '__ALL__') {
-                    // 전체기안 조회 페이징
                     const snap = await getDocs(
                         query(collection(db, 'drafts_index'), orderBy('createdAt', 'desc'), limit(newLimit))
                     );
@@ -987,23 +1185,38 @@
             const hintEl = document.getElementById('global-search-hint');
             if (!hintEl) return;
             const cnt = globalSearchResults.length;
-            const limit = GLOBAL_PAGE_SIZE * globalSearchPage;
-            const mightHaveMore = cnt >= limit;
+            const loadedLimit = GLOBAL_PAGE_SIZE * globalSearchPage;
+            const mightHaveMore = cnt >= loadedLimit;
+            const isAllMode = globalSearchKeyword === '__ALL__';
+
+            // 현재 로드된 기안번호 범위 표시
+            let rangeInfo = '';
+            if (cnt > 0) {
+                const newest = globalSearchResults[0];
+                const oldest = globalSearchResults[cnt - 1];
+                const newestId = newest.docId || '';
+                const oldestId = oldest.docId || '';
+                if (newestId && oldestId) {
+                    rangeInfo = `<span class="text-xs text-blue-500 ml-1">(${newestId} ~ ${oldestId})</span>`;
+                }
+            }
+
             hintEl.classList.remove('hidden');
             hintEl.innerHTML = `
                 <div class="flex items-center justify-between gap-3 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl text-sm">
                     <span class="text-blue-700">
                         <i class="bi bi-database-check mr-1"></i>
-                        전체 기간 검색 결과 <strong>${cnt}건</strong>
-                        ${mightHaveMore ? '<span class="text-xs text-blue-500 ml-1">(더 있을 수 있음)</span>' : ''}
+                        ${isAllMode ? '전체 기안' : '검색 결과'} <strong>${cnt}건</strong>
+                        ${rangeInfo}
                     </span>
                     <div class="flex items-center gap-2">
                         ${mightHaveMore ? `<button id="btn-load-more-global" onclick="loadMoreGlobalSearch()"
-                            class="flex items-center gap-1 bg-white border border-blue-300 text-blue-600 hover:bg-blue-50 text-xs font-bold px-3 py-1.5 rounded-lg transition">
-                            <i class="bi bi-plus-circle"></i> 더 이전 자료 검색
+                            class="flex items-center gap-1 bg-white border border-blue-300 text-blue-600 hover:bg-blue-50 text-xs font-bold px-3 py-1.5 rounded-lg transition"
+                            title="${cnt}건 이후 ${GLOBAL_PAGE_SIZE}건 추가 로드">
+                            <i class="bi bi-plus-circle"></i> 더 보기 (+${GLOBAL_PAGE_SIZE}건)
                         </button>` : ''}
                         <button onclick="exitGlobalSearch()"
-                            class="flex items-center gap-1 text-gray-500 hover:text-gray-700 text-xs px-2 py-1.5 rounded-lg hover:bg-gray-100 transition">
+                            class="text-gray-400 hover:text-gray-600 text-xs px-2 py-1 rounded hover:bg-gray-100 transition">
                             <i class="bi bi-x"></i> 닫기
                         </button>
                     </div>
@@ -1034,10 +1247,13 @@
             globalSearchPage = 1;
 
             const hintEl = document.getElementById('global-search-hint');
+            const searchInput = document.getElementById('search-input');
+            if (searchInput) searchInput.value = '';
+
             if (hintEl) {
                 hintEl.innerHTML = `<div class="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-700">
                     <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                    전체 기안 조회 중...
+                    전체 기안 조회 중... (최대 ${GLOBAL_PAGE_SIZE}건)
                 </div>`;
                 hintEl.classList.remove('hidden');
             }
@@ -2277,12 +2493,13 @@
                 <div class="flex items-center gap-2 mb-2">
                     <div class="relative flex-1">
                         <i class="bi bi-search absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"></i>
-                        <input id="search-input" type="text" class="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 shadow-sm focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm bg-white" placeholder="제목, 기안자, 문서번호 검색...">
+                        <input id="search-input" type="text" class="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 shadow-sm focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm bg-white" placeholder="제목, 기안자, 문서번호(예: 2024-0032) 검색 — 자동으로 전체 기간 검색됩니다">
                     </div>
                     <button id="btn-all-drafts-search"
+                        title="검색 없이 전체 기안을 최신순으로 조회합니다"
                         class="shrink-0 flex items-center gap-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold px-3 py-3 rounded-xl shadow transition whitespace-nowrap">
-                        <i class="bi bi-database-search"></i>
-                        <span class="hidden sm:inline">전체기안 조회</span>
+                        <i class="bi bi-list-ul"></i>
+                        <span class="hidden sm:inline">전체 목록</span>
                     </button>
                 </div>
 
