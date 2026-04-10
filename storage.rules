@@ -1,0 +1,29 @@
+rules_version = '2';
+
+// =============================================================================
+// DY 의사결정시스템 — Firebase Storage 보안 규칙
+// =============================================================================
+// 첨부파일(attachments/...) 접근을 회사 도메인 사용자로 제한.
+// =============================================================================
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isCompanyUser() {
+      return request.auth != null
+          && request.auth.token.email_verified == true
+          && request.auth.token.email is string
+          && request.auth.token.email.lower().matches('.*@dongyeongtour[.]co[.]kr');
+    }
+
+    // 기안 첨부파일
+    match /attachments/{fileName} {
+      allow read, write: if isCompanyUser();
+    }
+
+    // 그 외 모든 경로 기본 거부
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

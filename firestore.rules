@@ -1,0 +1,57 @@
+rules_version = '2';
+
+// =============================================================================
+// DY 의사결정시스템 — Firestore 보안 규칙
+// =============================================================================
+// 핵심 원칙:
+//   1) 회사 Google Workspace 도메인(@dongyeongtour.co.kr) 계정만 접근 가능
+//   2) 클라이언트 측 검증과 동일한 정책을 서버에서 강제 (방어선 이중화)
+//   3) accessLogs는 append-only (생성만 허용, 수정/삭제 불가)
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── 공통 헬퍼: 회사 도메인 인증 사용자인지 확인 ──
+    function isCompanyUser() {
+      return request.auth != null
+          && request.auth.token.email_verified == true
+          && request.auth.token.email is string
+          && request.auth.token.email.lower().matches('.*@dongyeongtour[.]co[.]kr');
+    }
+
+    // ── 기안 본문 (drafts) ──
+    // 회사 사용자만 읽기/쓰기. 권한별 필터(본인/결재자/대외비)는 클라이언트의
+    // filterDraft()에서 1차 처리되며, 추후 필요 시 여기서도 강화 가능.
+    match /drafts/{docId} {
+      allow read, write: if isCompanyUser();
+    }
+
+    // ── 기안 인덱스 (drafts_index) ──
+    // drafts와 동일 권한. 모든 drafts 쓰기 시 함께 갱신되는 mirror.
+    match /drafts_index/{docId} {
+      allow read, write: if isCompanyUser();
+    }
+
+    // ── 메타데이터 (사용자 목록, 수리비 맵, 카운터) ──
+    // 회사 사용자 모두 읽기/쓰기 가능 (counters는 generateDocId 트랜잭션에서 필요).
+    match /meta/{docId} {
+      allow read, write: if isCompanyUser();
+    }
+
+    // ── 접근 감사 로그 (accessLogs) ──
+    // 생성만 허용 (append-only). 수정/삭제는 어떤 클라이언트도 불가.
+    // 본인 이메일이 viewer 필드와 일치해야 위조 방지.
+    match /accessLogs/{logId} {
+      allow create: if isCompanyUser()
+                   && request.resource.data.viewer == request.auth.token.email;
+      allow read:   if isCompanyUser();
+      allow update, delete: if false;
+    }
+
+    // ── 그 외 모든 경로 차단 (기본 거부) ──
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

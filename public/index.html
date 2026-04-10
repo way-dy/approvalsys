@@ -101,6 +101,19 @@
         const storage = getStorage(app);
         const provider = new GoogleAuthProvider();
 
+        // =========================================================================
+        // [접근 통제] 회사 Google Workspace 도메인만 허용
+        // =========================================================================
+        const ALLOWED_EMAIL_DOMAIN = 'dongyeongtour.co.kr';
+        // 'hd' 파라미터 → Google 로그인 팝업에서 워크스페이스 계정만 노출 (UX 힌트)
+        // 단, 이는 우회 가능하므로 onAuthStateChanged에서 실제 검증/차단을 수행
+        provider.setCustomParameters({ hd: ALLOWED_EMAIL_DOMAIN });
+
+        function isAllowedDomain(email) {
+            return typeof email === 'string' &&
+                   email.toLowerCase().endsWith('@' + ALLOWED_EMAIL_DOMAIN);
+        }
+
         let currentUser = null;
         let userList = [];
         let repairMap = {};
@@ -245,7 +258,14 @@
 
         function initApp() {
             // [최적화] 캐시된 유저 정보로 즉시 앱 화면 표시 시도
-            const cachedUser = getFromCache(CACHE_KEYS.USER, CACHE_EXPIRY_USER);
+            let cachedUser = getFromCache(CACHE_KEYS.USER, CACHE_EXPIRY_USER);
+            // [접근 통제] 캐시에 외부 도메인 계정이 남아있으면 무시 + 정리
+            if (cachedUser && !isAllowedDomain(cachedUser.email)) {
+                localStorage.removeItem(CACHE_KEYS.USER);
+                localStorage.removeItem(CACHE_KEYS.DRAFTS);
+                localStorage.removeItem(CACHE_KEYS.META);
+                cachedUser = null;
+            }
             if (cachedUser) {
                 // 캐시된 유저로 즉시 UI 렌더링 (Firebase auth 완료 전)
                 applyUserAndShowApp(cachedUser, true);
@@ -263,9 +283,22 @@
             onAuthStateChanged(auth, async (user) => {
                 clearTimeout(authTimeout);
                 if (user) {
+                    // ── [접근 통제] 회사 도메인 외 계정 차단 ──
+                    if (!isAllowedDomain(user.email)) {
+                        // 캐시 정리 + 즉시 로그아웃 + 안내
+                        currentUser = null;
+                        localStorage.removeItem(CACHE_KEYS.USER);
+                        localStorage.removeItem(CACHE_KEYS.DRAFTS);
+                        localStorage.removeItem(CACHE_KEYS.META);
+                        try { await signOut(auth); } catch(_) {}
+                        toggleView('login-view');
+                        showToast(`회사 계정(@${ALLOWED_EMAIL_DOMAIN})으로만 로그인할 수 있습니다.`, true);
+                        return;
+                    }
+
                     // [최적화] 메타 + 기안 데이터를 동시에 로드
                     const hasCachedUI = !!cachedUser;
-                    
+
                     if (!hasCachedUI) {
                         // 캐시 없을 때만 스켈레톤 표시
                         toggleView('app-view');
@@ -275,7 +308,7 @@
 
                     // [핵심] 메타와 기안 데이터를 병렬로 로드
                     await loadMetaAndDraftsParallel(user, hasCachedUI);
-                    
+
                 } else {
                     currentUser = null;
                     localStorage.removeItem(CACHE_KEYS.USER);
