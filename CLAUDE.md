@@ -72,7 +72,7 @@ Both are called with `mode: 'no-cors'` and never awaited for success — failure
 
 ### Firebase config
 
-`firebase.json` only configures hosting (`public: "public"`). `.firebaserc` pins project `approval-8ef73`. The Firebase Web API config is hardcoded inline in `index.html` (`firebaseConfig` object near line 88) — this is a public client config and is intentionally committed. Auth is Google sign-in via `signInWithPopup(GoogleAuthProvider)`.
+`firebase.json` only configures hosting (`public: "public"`). `.firebaserc` pins project `approval-8ef73`. The Firebase Web API config is hardcoded inline in `index.html` (`firebaseConfig` object near line 88) — this is a public client config and is intentionally committed. Auth is Google sign-in via `signInWithPopup(GoogleAuthProvider)`, restricted to the `@dongyeongtour.co.kr` domain via the `ALLOWED_EMAIL_DOMAIN` constant — non-matching accounts are immediately signed out at the auth callback.
 
 ## Conventions
 
