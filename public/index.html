@@ -578,10 +578,10 @@
                 clearTimeout(globalSearchTimeout);
                 // 1단계: 로컬 즉시 검색 (150ms)
                 searchTimeout = setTimeout(() => runSearch(e.target.value), 150);
-                // 2단계: 자동 Firestore 전체 검색 (500ms) — 별도 버튼 불필요
+                // 2단계: 자동 Firestore 전체 검색 (250ms) — 별도 버튼 불필요
                 const val = e.target.value.trim();
                 if (val.length >= 2) {
-                    globalSearchTimeout = setTimeout(() => autoGlobalSearch(val), 500);
+                    globalSearchTimeout = setTimeout(() => autoGlobalSearch(val), 250);
                 }
             });
 
@@ -895,7 +895,8 @@
                 return matchesKeyword;
             });
 
-            // 로컬 결과 표시 (자동 Firestore 검색이 500ms 후 실행되므로 별도 버튼 최소화)
+            // 로컬 결과 표시 (자동 Firestore 검색이 곧 실행되므로 별도 버튼 최소화)
+            const willAutoGlobal = term.length >= 2;
             if (hintEl) {
                 hintEl.classList.remove('hidden');
                 hintEl.innerHTML = `
@@ -904,12 +905,23 @@
                             <i class="bi bi-clock-history mr-1"></i>
                             최근 데이터 <strong>${filteredDisplayData.length}건</strong>
                         </span>
+                        ${willAutoGlobal ? `
                         <span class="text-gray-300">|</span>
                         <span class="text-blue-500 text-xs flex items-center gap-1">
                             <div class="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-500"></div>
                             전체 자동 검색 중...
-                        </span>
+                        </span>` : ''}
                     </div>`;
+            }
+            // 0건 + 자동 전체 검색 예정이면 "문서 없음" 대신 검색 중 메시지 표시
+            if (filteredDisplayData.length === 0 && willAutoGlobal) {
+                const container = document.getElementById('draft-list-container');
+                container.innerHTML = `<div class="text-center p-10 text-gray-400">
+                    <div class="inline-block animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500 mr-2 align-middle"></div>
+                    <span class="align-middle">전체 기간에서 검색 중...</span>
+                </div>`;
+                document.getElementById('pagination-container').innerHTML = '';
+                return;
             }
             renderPaginatedItems();
         }
@@ -1016,17 +1028,39 @@
             const hintEl = document.getElementById('global-search-hint');
             
             try {
-                const results = await fetchGlobalSearchResults(term, GLOBAL_PAGE_SIZE);
-                
+                let results = await fetchGlobalSearchResults(term, GLOBAL_PAGE_SIZE);
+
                 // 검색 입력이 중간에 바뀌었으면 결과 무시
                 const currentInput = document.getElementById('search-input').value.trim();
                 if (currentInput !== keyword) return;
+
+                // 폴백: searchTokens 인덱스 미생성 등으로 0건이면 최근 200건 로드해 클라이언트 필터
+                let usedFallback = false;
+                if (results.length === 0) {
+                    try {
+                        const snap = await getDocs(query(collection(db, 'drafts_index'),
+                            orderBy('createdAt', 'desc'), limit(GLOBAL_PAGE_SIZE)));
+                        const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                        const termLower = term.toLowerCase();
+                        results = all.filter(d =>
+                            (d.title && d.title.toLowerCase().includes(termLower)) ||
+                            (d.drafter && d.drafter.toLowerCase().includes(termLower)) ||
+                            (d.docId && d.docId.toLowerCase().includes(termLower)) ||
+                            (d.corporation && d.corporation.toLowerCase().includes(termLower)) ||
+                            (d.category && d.category.toLowerCase().includes(termLower))
+                        );
+                        results.forEach(d => { if (d.docId) draftCache[d.docId] = d; });
+                        usedFallback = true;
+                    } catch(e) { console.warn('전체검색 폴백 실패:', e); }
+                    // 폴백 후에도 입력이 바뀌었는지 재확인
+                    if (document.getElementById('search-input').value.trim() !== keyword) return;
+                }
 
                 isGlobalSearchMode = true;
                 globalSearchKeyword = term;
                 globalSearchPage = 1;
                 globalSearchResults = results;
-                
+
                 const activeTab = getActiveTabTarget();
                 filteredDisplayData = results.filter(d => filterDraft(d, activeTab));
                 currentPage = 1;
@@ -1417,6 +1451,14 @@
             container.appendChild(countSpan);
         }
 
+        // 1차 결재가 통과된 상태인지 (정상 결재, 전결 처리, 또는 전결 계정 모두 인정)
+        function isStage1Passed(draft) {
+            return draft.approval1Status === '결재'
+                || draft.approval1Status === '전결'
+                || draft.approver1Email === 'jeongyeol'
+                || draft.approver1Name === '전결';
+        }
+
         function filterDraft(draft, listType) {
             const isConfidential = draft.category === '대외비';
 
@@ -1433,7 +1475,7 @@
                         // 대외비 권한자 + 본인이 결재자인 경우만
                         if (!canViewConfidential) return false;
                         return currentUser && ((draft.approver1Email === currentUser.email && !draft.approval1Status) ||
-                               (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
+                               (draft.approver2Email === currentUser.email && isStage1Passed(draft) && !draft.approval2Status));
                     case 'allConfidentialDrafts':
                         // 대외비 권한자만 전체 열람
                         return canViewConfidential;
@@ -1455,7 +1497,7 @@
                     return currentUser && draft.drafterEmail === currentUser.email;
                 case 'toApprove':
                     return currentUser && ((draft.approver1Email === currentUser.email && !draft.approval1Status) ||
-                           (draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status));
+                           (draft.approver2Email === currentUser.email && isStage1Passed(draft) && !draft.approval2Status));
                 case 'toApproveConfidential':
                     return false; // 일반 문서는 대외비 탭에 표시 안 함
                 case 'allDrafts':
@@ -1724,7 +1766,7 @@
                     // 1차 결재
                     updateData.approval1Status = status;
                     updateData.approval1Comment = comment;
-                } else if (draft.approver2Email === currentUser.email && draft.approval1Status === '결재') {
+                } else if (draft.approver2Email === currentUser.email && isStage1Passed(draft)) {
                     // 2차 결재
                     updateData.approval2Status = status;
                     updateData.approval2Comment = comment;
@@ -2093,7 +2135,7 @@
             const isAdmin = currentUser.isAdmin;
             // 승인/반려 버튼: 본인이 실제 결재자일 때만 (관리자는 별도 패널에서 상태 수정)
             const isAppr1 = draft.approver1Email === currentUser.email && !draft.approval1Status;
-            const isAppr2 = draft.approver2Email === currentUser.email && draft.approval1Status === '결재' && !draft.approval2Status;
+            const isAppr2 = draft.approver2Email === currentUser.email && isStage1Passed(draft) && !draft.approval2Status;
             
             if (isAppr1 || isAppr2) {
                 btnArea.innerHTML = `<button onclick="processApproval('${draft.docId}', 'approve')" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 mr-2 text-sm shadow-sm">승인</button><button onclick="processApproval('${draft.docId}', 'reject')" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm shadow-sm">반려</button>`;
@@ -2133,10 +2175,21 @@
                 const userOptions = userList.map(u =>
                     `<option value="${u.email}">${u.name} (${u.team})</option>`
                 ).join('');
-                ['admin-approver1-email','admin-approver2-email'].forEach(id => {
-                    const sel = document.getElementById(id);
-                    sel.innerHTML = '<option value="">선택</option>' + userOptions;
-                });
+                // 현재 결재자가 userList에 없으면(전결, 퇴사자 등) 폴백 옵션 추가
+                const buildOptionsFor = (curEmail, curName) => {
+                    let extra = '';
+                    if (curEmail && !userList.some(u => u.email === curEmail)) {
+                        const label = curEmail === 'jeongyeol'
+                            ? '전결 (1차 자동 결재)'
+                            : `${curName || curEmail} (목록 외)`;
+                        extra = `<option value="${curEmail}">${label}</option>`;
+                    }
+                    return '<option value="">선택</option>' + extra + userOptions;
+                };
+                document.getElementById('admin-approver1-email').innerHTML =
+                    buildOptionsFor(draft.approver1Email, draft.approver1Name);
+                document.getElementById('admin-approver2-email').innerHTML =
+                    buildOptionsFor(draft.approver2Email, draft.approver2Name);
                 // 현재 값으로 초기화
                 document.getElementById('admin-approver1-email').value = draft.approver1Email || '';
                 document.getElementById('admin-approval1-status').value = draft.approval1Status || '';
