@@ -13,6 +13,10 @@ firebase-debug.*.log*
 # Claude Code local settings
 .claude/
 
+# clasp (GAS 관리) — 로그인 토큰은 git에 올리지 않음
+.clasprc.json
+gas/**/.clasprc.json
+
 # Firebase config
 
 # Uncomment this if you'd like others to create their own Firebase project.
