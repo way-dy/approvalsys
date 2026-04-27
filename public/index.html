@@ -74,7 +74,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, reauthenticateWithPopup } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
         import { initializeFirestore, persistentLocalCache, collection, doc, getDoc, getDocs, getDocsFromServer, setDoc, updateDoc, query, where, orderBy, runTransaction, serverTimestamp, limit } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
         import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js";
 
@@ -131,6 +131,8 @@
         // ── 대외비 재인증 세션 관리 ──
         let confidentialAuthTime = null;                  // 마지막 재인증 시각
         const CONFIDENTIAL_SESSION_MS = 30 * 60 * 1000;  // 30분 세션 유효
+        // 재인증 진행 중 플래그 — onAuthStateChanged의 currentUser 갈아치우기 방어 (이중 안전장치)
+        let isReauthInProgress = false;
 
         // ── 전체 기간 검색 상태 ──
         let isGlobalSearchMode = false;
@@ -283,6 +285,16 @@
             onAuthStateChanged(auth, async (user) => {
                 clearTimeout(authTimeout);
                 if (user) {
+                    // ── [보안] 대외비 재인증 진행 중에는 세션 교체 차단 ──
+                    // reauthenticateWithPopup이 정상이면 다른 계정 선택 시 user-mismatch로 막아주지만,
+                    // 만약의 SDK 동작 변경/race를 대비한 이중 안전장치.
+                    if (isReauthInProgress && currentUser && user.email !== currentUser.email) {
+                        console.warn('[보안] 재인증 중 다른 계정 감지 — 세션 유지하고 강제 로그아웃');
+                        try { await signOut(auth); } catch(_) {}
+                        showToast('본인 계정으로 인증해주세요. 다시 로그인이 필요합니다.', true);
+                        return;
+                    }
+
                     // ── [접근 통제] 회사 도메인 외 계정 차단 ──
                     if (!isAllowedDomain(user.email)) {
                         // 캐시 정리 + 즉시 로그아웃 + 안내
@@ -1940,18 +1952,36 @@
         }
 
         // Google 재인증 팝업 — Promise 반환 (성공: true / 실패: false)
+        // ★ 보안: signInWithPopup이 아닌 reauthenticateWithPopup 사용.
+        //   signInWithPopup은 팝업에서 다른 계정을 고르면 auth state 자체가 그 계정으로 바뀌어버림(세션 탈취 위험).
+        //   reauthenticateWithPopup은 현재 로그인 계정에 한해서만 재인증을 수행하며, 다른 계정 선택 시
+        //   auth/user-mismatch 에러를 던지고 세션을 건드리지 않는다.
         async function reAuthWithGoogle() {
+            const fbUser = auth.currentUser;
+            if (!fbUser || !currentUser || fbUser.email !== currentUser.email) {
+                showToast('로그인 상태가 올바르지 않습니다. 다시 로그인해주세요.', 'warning');
+                return false;
+            }
+            isReauthInProgress = true;
             try {
-                const result = await signInWithPopup(auth, provider);
-                // 재인증한 계정이 현재 로그인 계정과 동일한지 확인
-                if (result.user.email !== currentUser.email) {
+                const result = await reauthenticateWithPopup(fbUser, provider);
+                // 이중 안전장치: 반환된 계정과 currentUser 비교 (방어적 체크)
+                if (!result?.user || result.user.email !== currentUser.email) {
                     showToast('본인 계정으로 인증해주세요.', 'warning');
                     return false;
                 }
                 confidentialAuthTime = Date.now();
                 return true;
             } catch(e) {
-                return false; // 팝업 닫거나 취소 시
+                // auth/user-mismatch: 팝업에서 다른 계정 선택 — 세션은 변경되지 않음
+                if (e?.code === 'auth/user-mismatch') {
+                    showToast('본인 계정으로 인증해주세요.', 'warning');
+                } else if (e?.code && e.code !== 'auth/popup-closed-by-user' && e.code !== 'auth/cancelled-popup-request') {
+                    console.warn('[reauth] 실패:', e.code);
+                }
+                return false;
+            } finally {
+                isReauthInProgress = false;
             }
         }
 

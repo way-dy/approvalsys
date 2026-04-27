@@ -91,7 +91,7 @@ Both are called with `mode: 'no-cors'` and never awaited for success — failure
 
 ### Firebase config
 
-`firebase.json` only configures hosting (`public: "public"`). `.firebaserc` pins project `approval-8ef73`. The Firebase Web API config is hardcoded inline in `index.html` (`firebaseConfig` object near line 88) — this is a public client config and is intentionally committed. Auth is Google sign-in via `signInWithPopup(GoogleAuthProvider)`, restricted to the `@dongyeongtour.co.kr` domain via the `ALLOWED_EMAIL_DOMAIN` constant — non-matching accounts are immediately signed out at the auth callback.
+`firebase.json` only configures hosting (`public: "public"`). `.firebaserc` pins project `approval-8ef73`. The Firebase Web API config is hardcoded inline in `index.html` (`firebaseConfig` object near line 88) — this is a public client config and is intentionally committed. 최초 로그인은 `signInWithPopup(GoogleAuthProvider)`이고, 대외비 재인증은 **`reauthenticateWithPopup(auth.currentUser, provider)`** 사용(아래 "중요 이슈 기록" 참조). `@dongyeongtour.co.kr` 도메인 외 계정은 `onAuthStateChanged`에서 즉시 차단/로그아웃.
 
 ## Conventions
 
@@ -105,3 +105,15 @@ Both are called with `mode: 'no-cors'` and never awaited for success — failure
 - **Admin approver `<select>` fallback**: `admin-approver1-email` / `admin-approver2-email` are `<select>` elements built from `userList`. If `draft.approver*Email` isn't in `userList` (전결 = `'jeongyeol'`, or 퇴사자), `.value = email` silently shows blank. The admin panel populates them via `buildOptionsFor(email, name)` which prepends a fallback `<option>` when the value is missing. Preserve this when refactoring the admin panel.
 - **Search "no docs" flash**: `runSearch` filters local 50건 first; if 0 matches AND keyword ≥ 2 chars, it shows a "전체 기간에서 검색 중..." placeholder instead of "문서가 없습니다", and `autoGlobalSearch` (250ms debounce) takes over. `autoGlobalSearch` has a fallback path: if `fetchGlobalSearchResults` returns 0 (e.g., the `searchTokens` composite index isn't deployed), it loads the latest 200 from `drafts_index` and filters client-side. Don't remove the fallback.
 - **searchTokens composite index**: `fetchGlobalSearchResults` queries `drafts_index` with `where('searchTokens', 'array-contains', ...) + orderBy('createdAt', 'desc')`. This requires a composite Firestore index — if it isn't created, the query throws and the fallback above kicks in. Creating the index in Firebase Console will make global search faster, but the app works without it.
+- **대외비 재인증은 반드시 `reauthenticateWithPopup`**: `signInWithPopup`은 팝업에서 다른 계정을 고르면 auth state 자체를 그 계정으로 교체해버려 세션 탈취가 가능. `reauthenticateWithPopup(auth.currentUser, provider)`은 현재 계정에 한정해 재인증하며, 다른 계정 선택 시 `auth/user-mismatch` 에러를 던지고 세션을 건드리지 않음. 추가로 `isReauthInProgress` 플래그가 `onAuthStateChanged`에서 race를 방어. 자세한 내력은 "중요 이슈 기록" 참조.
+
+## 중요 이슈 기록
+
+- **2026-04-27 — 대외비 문서 재인증 세션 탈취 취약점 (수정 완료, 운영 배포)**
+  - 증상: 대외비 문서 재인증 팝업에서 다른 회사 계정을 클릭하면 그 계정으로 세션이 갈아끼워져 문서 접근이 가능했음.
+  - 원인: `reAuthWithGoogle`이 `signInWithPopup`을 사용 → 다른 계정 선택 시 Firebase auth state가 silently 교체되고 `onAuthStateChanged`가 `currentUser`를 그 계정으로 덮어씀. 이메일 비교 체크는 통과 못 해도 세션은 이미 바뀐 상태.
+  - 수정: `reauthenticateWithPopup(auth.currentUser, provider)`로 교체 + `isReauthInProgress` 플래그로 `onAuthStateChanged` race 방어 + 다른 계정 감지 시 강제 로그아웃. (`public/index.html` 77, 134, 285–296, 1959–1986줄 부근)
+
+## 작업 상태
+
+- [x] 대외비 재인증 세션 탈취 취약점 수정 및 운영 배포 (2026-04-27)
