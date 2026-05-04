@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "drafts_index",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "drafterEmail", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

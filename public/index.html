@@ -726,10 +726,38 @@
             await loadDraftsFromDB(listType, true);
         }
 
+        // 본인 기안 전용 인덱스 조회 — composite index(drafterEmail+createdAt) 미배포 시
+        // orderBy 빠진 fallback으로 클라이언트 정렬
+        async function _fetchMyDraftsIndex(email, forceServer) {
+            if (!email) return { forEach: () => {} };
+            const MY_LIMIT = 200;
+            const _exec = (q) => forceServer ? getDocsFromServer(q) : getDocs(q);
+            try {
+                return await _exec(query(
+                    collection(db, 'drafts_index'),
+                    where('drafterEmail', '==', email),
+                    orderBy('createdAt', 'desc'),
+                    limit(MY_LIMIT)
+                ));
+            } catch(e) {
+                console.warn('[myDrafts] composite index 미배포, fallback 시도:', e);
+                try {
+                    return await _exec(query(
+                        collection(db, 'drafts_index'),
+                        where('drafterEmail', '==', email),
+                        limit(MY_LIMIT)
+                    ));
+                } catch(e2) {
+                    console.warn('[myDrafts] fallback도 실패:', e2);
+                    return { forEach: () => {} };
+                }
+            }
+        }
+
         async function loadDraftsFromDB(listType, showSpinner = false, forceServer = false) {
             const listContainer = document.getElementById('draft-list-container');
             const INITIAL_LIMIT = 50; // [최적화] 500 → 50건으로 축소 (화면 표시는 10건/페이지)
-            
+
             if (showSpinner && allFetchedData.length === 0) {
                 showSkeletonUI('문서 목록 수신 중...');
                 setLoadingProgress(55, '문서 목록 수신 중...');
@@ -737,17 +765,28 @@
 
             try {
                 // [최적화 핵심] drafts_index 단독 우선 로드 (경량 데이터)
+                // 전 사용자 최신 50건 + 본인 기안(최대 200건)을 병렬로 가져와
+                // 내가 올린 기안 탭이 전역 50건에서 밀려도 항상 본인 기안 전부 보이게.
                 const indexQ = query(collection(db, 'drafts_index'), orderBy('createdAt', 'desc'), limit(INITIAL_LIMIT));
-                const indexSnap = await (forceServer ? getDocsFromServer(indexQ) : getDocs(indexQ))
-                    .catch(() => ({ forEach: () => {}, size: 0 }));
+                const myEmail = currentUser && currentUser.email;
+                const [indexSnap, mySnap] = await Promise.all([
+                    (forceServer ? getDocsFromServer(indexQ) : getDocs(indexQ))
+                        .catch(() => ({ forEach: () => {}, size: 0 })),
+                    _fetchMyDraftsIndex(myEmail, forceServer)
+                ]);
 
                 setLoadingProgress(75, '데이터 처리 중...');
 
-                // 1단계: drafts_index 결과 수집
+                // 1단계: drafts_index 결과 수집 (전역 + 본인 기안 병합, docId 기준 dedup)
                 const indexMap = new Map();
                 indexSnap.forEach((docSnap) => {
                     const d = { id: docSnap.id, ...docSnap.data() };
                     indexMap.set(d.docId || d.id, d);
+                });
+                mySnap.forEach((docSnap) => {
+                    const d = { id: docSnap.id, ...docSnap.data() };
+                    const key = d.docId || d.id;
+                    if (!indexMap.has(key)) indexMap.set(key, d);
                 });
 
                 // 2단계: 즉시 렌더링 (index 데이터만으로)
@@ -1560,10 +1599,13 @@
                 approver1Name:   draftData.approver1Name,
                 approver2Email:  draftData.approver2Email,
                 approver2Name:   draftData.approver2Name,
-                approval1Status: draftData.approval1Status  ?? null,
-                approval2Status: draftData.approval2Status  ?? null,
-                paymentDate:     draftData.paymentDate      ?? null,
-                searchTokens:    tokens
+                approval1Status:   draftData.approval1Status   ?? null,
+                approval1Comment:  draftData.approval1Comment  ?? null,
+                approval2Status:   draftData.approval2Status   ?? null,
+                approval2Comment:  draftData.approval2Comment  ?? null,
+                finalApprovalDate: draftData.finalApprovalDate ?? null,
+                paymentDate:       draftData.paymentDate       ?? null,
+                searchTokens:      tokens
             };
         }
 
@@ -2274,10 +2316,15 @@
             try {
                 showLoading('결재 상태 저장 중...');
                 await updateDoc(doc(db, 'drafts', docId), updateData);
-                await updateIndexDoc(docId, updateData); // ★ await로 반영 보장
+
+                // ★ 관리자 수정은 결재자/결재상태/지급일 모두 한 번에 바뀔 수 있어
+                //    drafts_index를 통째로 재작성(saveIndexDoc)해 부분 업데이트 누락/race 방지.
+                //    updateIndexDoc 화이트리스트는 approver* 필드를 제외하므로 결재자 변경 시
+                //    인덱스가 stale로 남아 리스트 결재현황이 최신화되지 않는 문제를 차단.
+                const fullSyncedData = { ...draft, ...updateData };
+                await saveIndexDoc(fullSyncedData);
 
                 // Optimistic Update
-                const fullSyncedData = { ...draft, ...updateData };
                 draftCache[docId] = fullSyncedData;
                 const aidx = allFetchedData.findIndex(d => d.docId === docId);
                 if (aidx !== -1) allFetchedData[aidx] = fullSyncedData;
