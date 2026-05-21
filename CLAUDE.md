@@ -59,7 +59,9 @@ Initial load flow (`initApp` → `loadMetaAndDraftsParallel`): show cached UI im
 - Non-confidential tabs (`myDrafts`, `toApprove`, `allDrafts`) match by `drafterEmail` / `approver1Email` / `approver2Email` against `currentUser.email`.
 - Accounting tabs (`acc-paju`, `acc-yongin`, `acc-seoul`, `acc-tour`) only show docs to users on `team === '회계팀'`, only for categories `경비` / `직영수리비`, only after `approval2Status === '결재'`, only when `paymentDate` is unset, and split by `corporation`.
 - `approvalOnly` users have their "내가 올린 기안" tab and the new-draft button hidden by `applyRoleBasedUI`.
-- `isAdmin` enables the admin-only direct-edit path (`adminSaveApprovalStatus`) which bypasses normal approval routing and writes an `adminEditLog` audit field.
+- `isAdmin` enables the admin-only direct-edit path (`adminSaveApprovalStatus`) which bypasses normal approval routing and writes an `adminEditLog` audit field. **단, 대외비 카테고리 수정은 `isSuperAdmin(currentUser)`만 허용** — 4중 게이트(상세모달 버튼·관리자 패널·`editDraft`·`adminSaveApprovalStatus`).
+- **슈퍼관리자(`SUPER_ADMIN_EMAILS = ['way@dongyeongtour.co.kr']`)**: `applySuperAdminElevation()`가 `currentUser` 초기화 3곳에서 `confidentialAccess`+`isAdmin` 강제 부여. 대외비 열람·수정·삭제 모두 가능. `isConfidentialViewer`(기안자/결재자 화이트리스트)도 슈퍼관리자 우회 포함 — **권한 모델 변경 시 별도 화이트리스트 누락 점검 필수**. 슈퍼관리자 추가는 `public/index.html` 상수 + `firestore.rules` `isSuperAdmin()` 헬퍼 동시 갱신.
+- **대외비 삭제**: `window.deleteConfidentialDraft(docId)`. 슈퍼관리자+대외비 conditional render. 순서: accessLogs → Storage `deleteObject` → `drafts_index` → `drafts` → 캐시 정리 + `recentlyUpdatedDocIds` 10초 보호.
 
 When adding a new tab or category, update **both** `filterDraft` and `getTitleByListType`, and add the matching `<button class="nav-item" data-target="...">` in the sidebar HTML.
 
@@ -109,26 +111,7 @@ Both are called with `mode: 'no-cors'` and never awaited for success — failure
 - **searchTokens composite index**: `fetchGlobalSearchResults` queries `drafts_index` with `where('searchTokens', 'array-contains', ...) + orderBy('createdAt', 'desc')`. This requires a composite Firestore index — if it isn't created, the query throws and the fallback above kicks in. Creating the index in Firebase Console will make global search faster, but the app works without it.
 - **대외비 재인증은 반드시 `reauthenticateWithPopup`**: `signInWithPopup`은 팝업에서 다른 계정을 고르면 auth state 자체를 그 계정으로 교체해버려 세션 탈취가 가능. `reauthenticateWithPopup(auth.currentUser, provider)`은 현재 계정에 한정해 재인증하며, 다른 계정 선택 시 `auth/user-mismatch` 에러를 던지고 세션을 건드리지 않음. 추가로 `isReauthInProgress` 플래그가 `onAuthStateChanged`에서 race를 방어. 자세한 내력은 "중요 이슈 기록" 참조.
 
-## 중요 이슈 기록
+## 중요 이슈 기록 / 작업 상태
 
-- **2026-04-27 — 대외비 문서 재인증 세션 탈취 취약점 (수정 완료, 운영 배포)**
-  - 증상: 대외비 문서 재인증 팝업에서 다른 회사 계정을 클릭하면 그 계정으로 세션이 갈아끼워져 문서 접근이 가능했음.
-  - 원인: `reAuthWithGoogle`이 `signInWithPopup`을 사용 → 다른 계정 선택 시 Firebase auth state가 silently 교체되고 `onAuthStateChanged`가 `currentUser`를 그 계정으로 덮어씀. 이메일 비교 체크는 통과 못 해도 세션은 이미 바뀐 상태.
-  - 수정: `reauthenticateWithPopup(auth.currentUser, provider)`로 교체 + `isReauthInProgress` 플래그로 `onAuthStateChanged` race 방어 + 다른 계정 감지 시 강제 로그아웃. (`public/index.html` 77, 134, 285–296, 1959–1986줄 부근)
-
-- **2026-05-04 — 관리자 패널 수정 후 리스트 결재현황 stale 이슈 (수정 완료)**
-  - 증상: 슈퍼관리자가 대외비 문서 결재 상태를 직접 수정해도 리스트의 결재현황 뱃지가 갱신되지 않고 이전 상태(예: 2차 결재 완료인데 "1차승인")로 남는 케이스.
-  - 원인: `adminSaveApprovalStatus`가 `drafts_index` 갱신을 `updateIndexDoc`(부분 업데이트)으로 처리. 화이트리스트가 `approval*`/`paymentDate`만 허용해 결재자(`approver*Email/Name`) 변경이 인덱스에 반영되지 않음. 또 인덱스 doc이 없어 `updateDoc`이 not-found로 실패하면 fallback `setDoc`은 갱신 *이전*의 `draftCache`를 기반으로 인덱스를 재구성하기 때문에 일부 필드가 stale로 남을 수 있음. 결과적으로 `loadDraftsFromDB`가 다음 갱신 사이클에서 stale 인덱스를 다시 읽어 리스트가 최신화되지 않음.
-  - 수정: 관리자 저장 흐름에서는 `updateIndexDoc` 대신 `saveIndexDoc(fullSyncedData)`로 전환해 `drafts_index`를 통째로 다시 작성. 부수적으로 `buildIndexDoc`에 `approval1Comment`/`approval2Comment`/`finalApprovalDate`도 포함시켜 `setDoc` 재작성 시 필드가 누락되지 않도록 함. (`public/index.html` 1545–1571, 2277–2287줄 부근)
-
-- **2026-05-04 — 본인 기안이 시간 지나면 "내가 올린 기안" 탭에서 사라지는 이슈 (수정 완료)**
-  - 증상: 본인이 작성한 기안이 시간이 지나면 "내가 올린 기안" 탭에서 보이지 않고 "전체 기안" 버튼(200건 로드)을 눌러야 다시 나타남.
-  - 원인: `loadDraftsFromDB`가 `drafts_index`를 `createdAt desc + limit(50)`로만 한 번 가져오기 때문에, 회사 전체에서 신규 기안이 50건 넘게 쌓이면 본인 기안이 전역 50건 윈도우에서 밀려나 `allFetchedData`에 들어오지 못함. `myDrafts` 필터(`drafterEmail === currentUser.email`)는 in-memory 데이터에서만 필터링하므로 본인 기안이 안 보임.
-  - 수정: `_fetchMyDraftsIndex(email)` 헬퍼 추가 — `drafts_index`를 `where('drafterEmail', '==', email) + orderBy('createdAt', 'desc') + limit(200)`로 조회. composite index 미배포 시 `orderBy` 빠진 fallback. `loadDraftsFromDB`가 전역 50건 + 본인 기안 200건을 `Promise.all`로 병렬 페치 후 `docId` 기준 dedup 머지. (`public/index.html` 729–755, 757–795줄 부근)
-  - 인덱스: `firestore.indexes.json`에 `drafterEmail ASC + createdAt DESC` 합성 인덱스 추가. 배포 명령: `firebase deploy --only firestore:indexes`. 인덱스 빌드되기 전에는 fallback 경로로 동작하므로 즉시 적용에 문제 없음.
-
-## 작업 상태
-
-- [x] 대외비 재인증 세션 탈취 취약점 수정 및 운영 배포 (2026-04-27)
-- [x] 관리자 패널 수정 후 리스트 결재현황 stale 이슈 수정 및 운영 배포 (2026-05-04)
-- [x] 본인 기안 누락 이슈 수정 + hosting/indexes 운영 배포 (2026-05-04)
+- 이슈 기록: [`.claude/issues.md`](.claude/issues.md)
+- 작업 체크박스: [`.claude/tasks.md`](.claude/tasks.md)

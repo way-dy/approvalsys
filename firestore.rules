@@ -20,17 +20,38 @@ service cloud.firestore {
           && request.auth.token.email.lower().matches('.*@dongyeongtour[.]co[.]kr');
     }
 
+    // ── 슈퍼관리자: 대외비 문서 update/delete 전권 ──
+    // 클라이언트 isSuperAdmin(SUPER_ADMIN_EMAILS)과 동일 ID로 서버측 게이트.
+    // 슈퍼관리자 추가 시 양쪽(이 헬퍼 + index.html SUPER_ADMIN_EMAILS) 동시 갱신.
+    function isSuperAdmin() {
+      return isCompanyUser()
+          && request.auth.token.email.lower() == 'way@dongyeongtour.co.kr';
+    }
+
     // ── 기안 본문 (drafts) ──
-    // 회사 사용자만 읽기/쓰기. 권한별 필터(본인/결재자/대외비)는 클라이언트의
-    // filterDraft()에서 1차 처리되며, 추후 필요 시 여기서도 강화 가능.
+    // 회사 사용자: read/create 허용. 대외비 update/delete는 슈퍼관리자 전용.
+    // 비-대외비 update/delete는 기존 정책 유지(회사 사용자 누구나).
+    // resource.data == 기존 문서, request.resource.data == 새 문서.
     match /drafts/{docId} {
-      allow read, write: if isCompanyUser();
+      allow read:   if isCompanyUser();
+      allow create: if isCompanyUser();
+      allow update: if isCompanyUser()
+                    && (resource.data.category != '대외비' || isSuperAdmin())
+                    && (request.resource.data.category != '대외비' || isSuperAdmin());
+      allow delete: if isCompanyUser()
+                    && (resource.data.category != '대외비' || isSuperAdmin());
     }
 
     // ── 기안 인덱스 (drafts_index) ──
-    // drafts와 동일 권한. 모든 drafts 쓰기 시 함께 갱신되는 mirror.
+    // drafts와 동일 정책. 모든 drafts 쓰기 시 함께 갱신되는 mirror.
     match /drafts_index/{docId} {
-      allow read, write: if isCompanyUser();
+      allow read:   if isCompanyUser();
+      allow create: if isCompanyUser();
+      allow update: if isCompanyUser()
+                    && (resource.data.category != '대외비' || isSuperAdmin())
+                    && (request.resource.data.category != '대외비' || isSuperAdmin());
+      allow delete: if isCompanyUser()
+                    && (resource.data.category != '대외비' || isSuperAdmin());
     }
 
     // ── 메타데이터 (사용자 목록, 수리비 맵, 카운터) ──

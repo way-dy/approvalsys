@@ -10,8 +10,10 @@ firebase-debug.*.log*
 # Firebase cache
 .firebase/
 
-# Claude Code local settings
-.claude/
+# Claude Code local settings (issues/tasks는 cross-PC 공유 위해 화이트리스트)
+.claude/*
+!.claude/issues.md
+!.claude/tasks.md
 
 # clasp (GAS 관리) — 로그인 토큰은 git에 올리지 않음
 .clasprc.json
