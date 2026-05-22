@@ -75,7 +75,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, reauthenticateWithPopup } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-        import { initializeFirestore, persistentLocalCache, collection, doc, getDoc, getDocs, getDocsFromServer, setDoc, updateDoc, deleteDoc, query, where, orderBy, runTransaction, serverTimestamp, limit } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { initializeFirestore, persistentLocalCache, collection, doc, getDoc, getDocs, getDocsFromServer, setDoc, updateDoc, deleteDoc, query, where, orderBy, runTransaction, serverTimestamp, limit, arrayUnion } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
         import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js";
 
         // =========================================================================
@@ -887,9 +887,92 @@
         }
 
         function renderWithFilter(listType) {
+            renderSubTabs(listType);
+            renderSidebarBadges();
             filteredDisplayData = allFetchedData.filter(draft => filterDraft(draft, listType));
             currentPage = 1;
-            runSearch(''); 
+            runSearch('');
+        }
+
+        // =========================================================================
+        // [서브탭] 분류 칩 렌더 + 사이드바 반려 뱃지
+        // =========================================================================
+        function renderSubTabs(listType) {
+            const bar = document.getElementById('subtab-bar');
+            if (!bar) return;
+            const tabs = SUB_TABS[listType];
+            if (!tabs) { bar.classList.add('hidden'); bar.classList.remove('flex'); bar.innerHTML = ''; return; }
+            bar.classList.remove('hidden'); bar.classList.add('flex');
+            const active = getSubTab(listType);
+            bar.innerHTML = tabs.map(t => {
+                const count = allFetchedData.filter(d => matchesTab(d, listType, t.key)).length;
+                const isActive = t.key === active;
+                let newBadge = '';
+                if (t.key === 'rejected') {
+                    const unacked = allFetchedData.filter(d => matchesTab(d, listType, 'rejected') && isUnackedRejection(d)).length;
+                    if (unacked > 0) newBadge = `<span class="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold">${unacked}</span>`;
+                }
+                const cls = isActive
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                    : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50';
+                const cntCls = isActive ? 'text-blue-100' : 'text-gray-400';
+                return `<button type="button" onclick="setSubTab('${listType}','${t.key}')" class="px-3 py-1.5 rounded-full text-sm font-bold border transition whitespace-nowrap flex items-center gap-1 ${cls}">${t.label}<span class="${cntCls} font-normal">${count}</span>${newBadge}</button>`;
+            }).join('');
+        }
+
+        // 사이드바 myDrafts·toApprove 메뉴에 미확인 반려 건수 뱃지
+        function renderSidebarBadges() {
+            ['myDrafts', 'toApprove'].forEach(tab => {
+                const btn = document.querySelector(`.nav-item[data-target="${tab}"]`);
+                if (!btn) return;
+                const cnt = allFetchedData.filter(d => matchesTab(d, tab, 'rejected') && isUnackedRejection(d)).length;
+                let badge = btn.querySelector('.nav-reject-badge');
+                if (cnt > 0) {
+                    if (!badge) {
+                        badge = document.createElement('span');
+                        badge.className = 'nav-reject-badge ml-auto inline-flex items-center justify-center min-w-[20px] h-5 px-1 rounded-full bg-red-500 text-white text-[11px] font-bold';
+                        btn.appendChild(badge);
+                    }
+                    badge.textContent = cnt;
+                } else if (badge) {
+                    badge.remove();
+                }
+            });
+        }
+
+        window.setSubTab = (listType, key) => {
+            currentSubTab[listType] = key;
+            currentPage = 1;
+            renderSubTabs(listType);
+            const kw = document.getElementById('search-input');
+            runSearch(kw ? kw.value : '');
+        };
+
+        // 반려 문서를 본인(기안자·1·2차 결재자)이 열람 → rejectionAckedBy에 본인 추가(NEW 해제)
+        async function markRejectionAcked(draft) {
+            if (!currentUser || !draft) return;
+            if (draft.category === '대외비') return;          // rules상 대외비 update 불가
+            if (!isRejectedDraft(draft)) return;
+            const email = currentUser.email;
+            const isMine = email === draft.drafterEmail || email === draft.approver1Email || email === draft.approver2Email;
+            if (!isMine) return;
+            const acked = Array.isArray(draft.rejectionAckedBy) ? draft.rejectionAckedBy : [];
+            if (acked.includes(email)) return;                // 이미 확인함
+            const next = [...acked, email];
+            // 옵티미스틱: 메모리·캐시 즉시 반영 + 백그라운드 stale 덮어쓰기 방지
+            draft.rejectionAckedBy = next;
+            draftCache[draft.docId] = draft;
+            const idx = allFetchedData.findIndex(d => d.docId === draft.docId);
+            if (idx !== -1) allFetchedData[idx] = { ...allFetchedData[idx], rejectionAckedBy: next };
+            recentlyUpdatedDocIds.add(draft.docId);
+            setTimeout(() => recentlyUpdatedDocIds.delete(draft.docId), 10000);
+            localStorage.removeItem(CACHE_KEYS.DRAFTS);
+            renderSubTabs(getActiveTabTarget());
+            renderSidebarBadges();
+            try {
+                await updateDoc(doc(db, 'drafts', draft.docId), { rejectionAckedBy: arrayUnion(email) });
+                await updateIndexDoc(draft.docId, { rejectionAckedBy: next }); // 인덱스는 평문 배열로 미러
+            } catch(e) { console.warn('[반려확인] rejectionAckedBy 갱신 실패:', e); }
         }
 
         function runSearch(keyword) {
@@ -1441,10 +1524,14 @@
                 card.className = `bg-white p-4 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition cursor-pointer mb-3 relative overflow-hidden group`;
                 card.onclick = () => openDetailModal(draft.docId);
                 
-                const paymentBadge = draft.paymentDate 
+                const paymentBadge = draft.paymentDate
                     ? `<span class="inline-flex items-center px-2 py-1 rounded text-[11px] font-bold bg-indigo-600 text-white shadow-sm mr-2 animate-pulse">
                          <i class="bi bi-cash-stack mr-1"></i>${draft.paymentDate} 지급
-                       </span>` 
+                       </span>`
+                    : '';
+
+                const newPill = isUnackedRejection(draft)
+                    ? `<span class="inline-flex items-center px-2 py-1 rounded text-[11px] font-extrabold bg-red-500 text-white shadow-sm mr-2 animate-pulse">NEW</span>`
                     : '';
 
                 card.innerHTML = `
@@ -1465,7 +1552,7 @@
                             </h3>
                         </div>
                         <div class="flex items-center justify-end shrink-0 mt-1 md:mt-0">
-                            ${paymentBadge}
+                            ${newPill}${paymentBadge}
                             <span class="px-2 py-1 md:px-3 md:py-1.5 rounded-full text-xs md:text-sm font-bold whitespace-nowrap shadow-sm border border-opacity-20 ${status.bgClass} ${status.textClass} border-current">
                                 ${status.text}
                             </span>
@@ -1534,7 +1621,60 @@
                 || draft.approver1Name === '전결';
         }
 
-        function filterDraft(draft, listType) {
+        // =========================================================================
+        // [서브탭] 메인 탭 내 분류 칩 (전체/진행중/반려/완료)
+        // =========================================================================
+        const SUB_TABS = {
+            myDrafts: [
+                { key: 'all',      label: '전체' },
+                { key: 'pending',  label: '진행중' },
+                { key: 'rejected', label: '반려' },
+                { key: 'done',     label: '완료' },
+            ],
+            toApprove: [
+                { key: 'pending',  label: '결재 대기' },
+                { key: 'rejected', label: '반려' },
+            ],
+        };
+        const currentSubTab = {}; // listType → 선택된 서브탭 key
+
+        function getSubTab(listType) {
+            if (!SUB_TABS[listType]) return null;
+            return currentSubTab[listType] || SUB_TABS[listType][0].key;
+        }
+
+        function isRejectedDraft(d) { return d.approval1Status === '반려' || d.approval2Status === '반려'; }
+        function isDoneDraft(d)     { return d.approval2Status === '결재'; }
+
+        // 본인이 1·2차 결재자인 반려 문서 (대외비 제외 — 대외비는 toApproveConfidential 전용)
+        function isApproverRejected(d) {
+            if (!currentUser || d.category === '대외비') return false;
+            if (!isRejectedDraft(d)) return false;
+            return d.approver1Email === currentUser.email || d.approver2Email === currentUser.email;
+        }
+
+        // 반려건 미확인(NEW) 여부 — 대외비는 rules상 ack 쓰기 불가 → NEW 미적용
+        function isUnackedRejection(d) {
+            if (!currentUser || d.category === '대외비') return false;
+            if (!isRejectedDraft(d)) return false;
+            return !(Array.isArray(d.rejectionAckedBy) && d.rejectionAckedBy.includes(currentUser.email));
+        }
+
+        // (listType, sub) 조합의 문서 소속 판정 — filterDraft·칩 카운트 공용
+        function matchesTab(draft, listType, sub) {
+            // 결재할 문서 > 반려: filterDraftBase(toApprove)는 '미결'만 반환 → 별도 판정
+            if (listType === 'toApprove' && sub === 'rejected') return isApproverRejected(draft);
+            if (!filterDraftBase(draft, listType)) return false;
+            if (!sub || sub === 'all') return true;
+            switch (sub) {
+                case 'pending':  return !isRejectedDraft(draft) && !isDoneDraft(draft);
+                case 'rejected': return isRejectedDraft(draft);
+                case 'done':     return isDoneDraft(draft);
+                default:         return true;
+            }
+        }
+
+        function filterDraftBase(draft, listType) {
             const isConfidential = draft.category === '대외비';
 
             // ── 대외비 권한: em시트 E열 '대외비' 마킹 계정만 (isAdmin·대표·임원 등 예외 없음)
@@ -1587,6 +1727,11 @@
             }
         }
 
+        // 외부 호출용 래퍼 — 현재 서브탭까지 반영. 기존 모든 호출부는 이 함수를 그대로 사용.
+        function filterDraft(draft, listType) {
+            return matchesTab(draft, listType, getSubTab(listType));
+        }
+
         // =========================================================================
         // [drafts_index] n-gram 토큰 생성 + 경량 인덱스 저장
         // =========================================================================
@@ -1629,6 +1774,7 @@
                 approval2Comment:  draftData.approval2Comment  ?? null,
                 finalApprovalDate: draftData.finalApprovalDate ?? null,
                 paymentDate:       draftData.paymentDate       ?? null,
+                rejectionAckedBy:  Array.isArray(draftData.rejectionAckedBy) ? draftData.rejectionAckedBy : [],
                 searchTokens:      tokens
             };
         }
@@ -1644,7 +1790,7 @@
             try {
                 // approval/payment 필드만 업데이트
                 const allowed = ['approval1Status','approval1Comment','approval2Status',
-                                 'approval2Comment','finalApprovalDate','paymentDate'];
+                                 'approval2Comment','finalApprovalDate','paymentDate','rejectionAckedBy'];
                 const filtered = {};
                 allowed.forEach(k => { if (k in updateData) filtered[k] = updateData[k]; });
                 if (Object.keys(filtered).length === 0) return;
@@ -1729,7 +1875,8 @@
                     date: isNew ? new Date().toISOString().split('T')[0] : (draftCache[newDocId].date),
                     
                     approval2Status: isNew ? null : (draftCache[newDocId].approval2Status || null),
-                    paymentDate: isNew ? null : (draftCache[newDocId].paymentDate || null)
+                    paymentDate: isNew ? null : (draftCache[newDocId].paymentDate || null),
+                    rejectionAckedBy: isNew ? [] : (draftCache[newDocId].rejectionAckedBy || [])
                 };
                 
                 if (isNew) await setDoc(doc(db, "drafts", newDocId), draftData);
@@ -1852,7 +1999,10 @@
                 } else {
                     throw new Error('권한 없음');
                 }
-                
+
+                // 반려 시: 반려한 결재자는 본인 확인 완료로 간주 (NEW 뱃지 제외)
+                if (status === '반려') updateData.rejectionAckedBy = [currentUser.email];
+
                 await updateDoc(docRef, updateData);
                 await updateIndexDoc(docId, updateData); // ★ await로 drafts_index 반영 보장
 
@@ -2235,6 +2385,9 @@
             renderApprovalStatus('detail-appr1', draft.approver1Name, draft.approval1Status, draft.approval1Comment);
             renderApprovalStatus('detail-appr2', draft.approver2Name, draft.approval2Status, draft.approval2Comment);
             renderApprovalComments(draft);
+
+            // 반려 문서를 본인(기안자·결재자)이 열람 → NEW 뱃지 해제
+            markRejectionAcked(draft);
 
             const btnArea = document.getElementById('detail-actions');
             btnArea.innerHTML = '';
@@ -2863,6 +3016,9 @@
                         <span class="hidden sm:inline">전체 목록</span>
                     </button>
                 </div>
+
+                <!-- [서브탭] 분류 칩 -->
+                <div id="subtab-bar" class="hidden flex-wrap items-center gap-2 mb-3"></div>
 
                 <!-- 전체 기간 검색 힌트/결과 배너 -->
                 <div id="global-search-hint" class="hidden mb-4"></div>

@@ -25,3 +25,13 @@
   - `filterDraft`는 `confidentialAccess` 기반이라 슈퍼관리자(elevation) 통과 → 리스트는 보임. 그러나 `isConfidentialViewer(draft)`(line 2013)는 기안자/1차/2차 결재자 화이트리스트라 슈퍼관리자 차단 → 상세 진입 시 "열람 권한이 없습니다" 토스트.
   - 수정: `isConfidentialViewer`에 `if (isSuperAdmin(currentUser)) return true;` 1줄. 30분 재인증은 슈퍼관리자도 그대로(본인 확인).
   - 교훈: 권한 모델 변경 시 `filterDraft` 외에 별도 화이트리스트(`isConfidentialViewer` 등) 누락 점검 필수.
+
+- **2026-05-22 — 반려/미결 서브탭 + 반려건 미확인(NEW) 표시 (수정·미배포)**
+  - 배경: 기안 반려 시 메일은 발송되나 앱 내 인지가 약함 → 분류 탭 + NEW 표시 요청.
+  - 신규 필드 `rejectionAckedBy`(이메일 배열): 반려 문서를 본인(기안자/1·2차 결재자)이 상세모달로 열람하면 본인 이메일 추가 → NEW 해제. 기기 무관 동기화. `drafts` 본체는 `arrayUnion`, `drafts_index` 미러는 평문 배열(센티넬 금지).
+  - UI: 페이지 내 서브탭 칩(`#subtab-bar`). `myDrafts`=전체/진행중/반려/완료, `toApprove`=결재대기/반려. 칩·사이드바에 미확인 반려 건수 뱃지, 카드에 NEW 핀.
+  - 구조: `filterDraft` → `filterDraftBase`로 改名, `filterDraft`는 `matchesTab(draft,listType,getSubTab(listType))` 호출 래퍼. 기존 호출부 전부 불변. `toApprove/pending`은 base가 이미 '미결'만 반환하므로 동작 동일.
+  - 결재자 반려탭은 로드된 데이터(전역 50+본인 200) 기준 — 추가 인덱스/쿼리 없음. `firestore.rules`·`firestore.indexes.json` 변경 없음.
+  - 대외비는 ack/NEW 전면 제외(rules상 일반 사용자 update 불가). 목록 노출은 정상 유지.
+  - `buildIndexDoc`에 `rejectionAckedBy` 추가, `updateIndexDoc` 화이트리스트 7필드(`+rejectionAckedBy`). `submitApprovalComment`는 반려 시 반려자 본인 pre-ack.
+  - 배포: `firebase deploy --only hosting`만 필요 (rules/indexes 불필요).
