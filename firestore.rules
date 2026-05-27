@@ -28,16 +28,43 @@ service cloud.firestore {
           && request.auth.token.email.lower() == 'way@dongyeongtour.co.kr';
     }
 
+    // ── 결재 처리 화이트리스트: submitApprovalComment가 변경하는 6필드만 허용 ──
+    // 일반 결재자가 대외비 문서를 승인/반려할 때, 카테고리/본문은 못 건드리고
+    // 결재 6필드만 변경하는 update를 허용하기 위한 헬퍼.
+    // (1) 변경된 필드가 화이트리스트 부분집합인지, (2) 카테고리가 변하지 않는지 검사.
+    function isApprovalOnlyUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['approval1Status', 'approval1Comment',
+                        'approval2Status', 'approval2Comment',
+                        'finalApprovalDate', 'rejectionAckedBy'])
+          && request.resource.data.category == resource.data.category;
+    }
+
+    // ── 본 문서의 1·2차 결재자 본인 여부 ──
+    function isApproverForDoc() {
+      return resource.data.approver1Email == request.auth.token.email
+          || resource.data.approver2Email == request.auth.token.email;
+    }
+
     // ── 기안 본문 (drafts) ──
-    // 회사 사용자: read/create 허용. 대외비 update/delete는 슈퍼관리자 전용.
-    // 비-대외비 update/delete는 기존 정책 유지(회사 사용자 누구나).
+    // 회사 사용자: read/create 허용. update 게이트:
+    //   (1) 비-대외비는 기존대로 누구나 (대외비로의 카테고리 변경 차단)
+    //   (2) 슈퍼관리자는 대외비 전권
+    //   (3) 대외비 결재 처리: 결재자 본인이 결재 6필드만 변경(카테고리 불변)
+    // delete는 슈퍼관리자만(변경 없음).
     // resource.data == 기존 문서, request.resource.data == 새 문서.
     match /drafts/{docId} {
       allow read:   if isCompanyUser();
       allow create: if isCompanyUser();
       allow update: if isCompanyUser()
-                    && (resource.data.category != '대외비' || isSuperAdmin())
-                    && (request.resource.data.category != '대외비' || isSuperAdmin());
+                    && (
+                      (resource.data.category != '대외비'
+                        && request.resource.data.category != '대외비')
+                      || isSuperAdmin()
+                      || (resource.data.category == '대외비'
+                          && isApproverForDoc()
+                          && isApprovalOnlyUpdate())
+                    );
       allow delete: if isCompanyUser()
                     && (resource.data.category != '대외비' || isSuperAdmin());
     }
@@ -48,8 +75,14 @@ service cloud.firestore {
       allow read:   if isCompanyUser();
       allow create: if isCompanyUser();
       allow update: if isCompanyUser()
-                    && (resource.data.category != '대외비' || isSuperAdmin())
-                    && (request.resource.data.category != '대외비' || isSuperAdmin());
+                    && (
+                      (resource.data.category != '대외비'
+                        && request.resource.data.category != '대외비')
+                      || isSuperAdmin()
+                      || (resource.data.category == '대외비'
+                          && isApproverForDoc()
+                          && isApprovalOnlyUpdate())
+                    );
       allow delete: if isCompanyUser()
                     && (resource.data.category != '대외비' || isSuperAdmin());
     }

@@ -26,6 +26,15 @@
   - 수정: `isConfidentialViewer`에 `if (isSuperAdmin(currentUser)) return true;` 1줄. 30분 재인증은 슈퍼관리자도 그대로(본인 확인).
   - 교훈: 권한 모델 변경 시 `filterDraft` 외에 별도 화이트리스트(`isConfidentialViewer` 등) 누락 점검 필수.
 
+- **2026-05-27 — 대외비 결재 시 일반 결재자 권한 회귀 수정 (수정·배포)**
+  - 증상: 대외비 본인 결재자가 승인/반려 시도 시 `Missing or insufficient permissions` 토스트.
+  - 원인: 2026-05-21 커밋 `8f704e1`에서 rules `drafts`/`drafts_index` update 게이트를 "대외비면 슈퍼관리자만"으로 좁힘. 의도는 본문/카테고리 편집 차단이었으나 `submitApprovalComment`의 결재 6필드 update까지 같은 게이트에 걸려 회귀.
+  - 수정: `firestore.rules`에 헬퍼 2개 추가(`isApprovalOnlyUpdate` = 6필드 한정 + 카테고리 불변, `isApproverForDoc` = 1·2차 결재자 본인) → `drafts`/`drafts_index` update에 세 번째 허용 경로 추가. delete·read·create 변경 없음.
+  - 결재 6필드: `approval1Status`, `approval1Comment`, `approval2Status`, `approval2Comment`, `finalApprovalDate`, `rejectionAckedBy`.
+  - 영향 분석: `editDraft`/`adminSaveApprovalStatus`는 클라이언트 슈퍼관리자 게이트로 차단(영향 없음). `markRejectionAcked`는 클라 자체 대외비 제외. `savePaymentDate`는 회계 카테고리 한정. 상세모달 자동보정(line 2298)은 결재 6필드 화이트리스트 내, 결재자 본인 열람 시 통과.
+  - 카테고리 우회 방지: `(resource.data.category != '대외비' && request.resource.data.category != '대외비')` 양방향 검사 + 결재 경로는 `request.resource.data.category == resource.data.category` 불변 강제.
+  - 배포 완료(`firebase deploy --only firestore:rules`). hosting/index.html 변경 없음 → 사용자 새로고침 불필요.
+
 - **2026-05-22 — 반려/미결 서브탭 + 반려건 미확인(NEW) 표시 (수정·배포)**
   - 배경: 기안 반려 시 메일은 발송되나 앱 내 인지가 약함 → 분류 탭 + NEW 표시 요청.
   - 신규 필드 `rejectionAckedBy`(이메일 배열): 반려 문서를 본인(기안자/1·2차 결재자)이 상세모달로 열람하면 본인 이메일 추가 → NEW 해제. 기기 무관 동기화. `drafts` 본체는 `arrayUnion`, `drafts_index` 미러는 평문 배열(센티넬 금지).
