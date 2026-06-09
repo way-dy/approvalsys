@@ -161,3 +161,78 @@ function migrateAll() {
 
   Logger.log(`=== 완료: 성공 ${success}건 / 실패 ${fail}건 ===`);
 }
+
+// ============================================================
+// [2026-06-09] 미러 필드 백필 (drift 치유, 멱등)
+// ------------------------------------------------------------
+// 왜: savePaymentDate 의 drafts_index 동기화는 2026-03-12(커밋 a89e431)에
+//     처음 추가됨. 그 이전에 지급/처리된 문서는 drafts(원본)에만 기록되고
+//     drafts_index(목록·회계 지급처리 큐 미러)에는 paymentDate 등이 비어 있어
+//     "지급 완료인데도 회계 큐에서 안 빠지는" 버그(예: 2026-0245). 자가복구
+//     _supplementFromDrafts 는 '인덱스에 아예 없는' 문서만 치유하므로 방치됨.
+// 무엇: drafts(원본=진실)의 미러 7필드만 updateMask 로 PATCH. searchTokens/
+//       title/createdAt 등 나머지는 절대 건드리지 않음. 여러 번 돌려도 안전.
+// 사용: migrateAll() 과 별개. verifyMirror('2026-0245') 로 전/후 확인 →
+//       backfillMirrorFields() 1회 실행 → 다시 verifyMirror 로 검증.
+// ============================================================
+const MIRROR_FIELDS = ['approval1Status','approval1Comment','approval2Status',
+                       'approval2Comment','finalApprovalDate','paymentDate','rejectionAckedBy'];
+
+function _mirrorValue(k, v) {
+  if (k === 'rejectionAckedBy') {
+    return { arrayValue: { values: (Array.isArray(v) ? v : []).map(x => ({ stringValue: String(x) })) } };
+  }
+  return (v === null || v === undefined) ? { nullValue: null } : { stringValue: String(v) };
+}
+
+function backfillMirrorFields() {
+  Logger.log('=== drafts_index 미러 백필 시작 ===');
+  const drafts = fetchAllDrafts();
+  Logger.log(`총 ${drafts.length}건 검사`);
+
+  const mask = MIRROR_FIELDS.map(k => `updateMask.fieldPaths=${k}`).join('&');
+  let patched = 0, fail = 0;
+  drafts.forEach((draft, i) => {
+    try {
+      const fields = {};
+      MIRROR_FIELDS.forEach(k => { fields[k] = _mirrorValue(k, draft[k]); });
+      const url = `${FIRESTORE_BASE}/drafts_index/${draft.docId}?${mask}`;
+      const res = UrlFetchApp.fetch(url, {
+        method: 'PATCH',
+        contentType: 'application/json',
+        headers: { Authorization: `Bearer ${getToken()}` },
+        payload: JSON.stringify({ fields }),
+        muteHttpExceptions: true
+      });
+      if (res.getResponseCode() >= 300) {
+        fail++;
+        Logger.log(`  실패 [${draft.docId}] ${res.getResponseCode()}: ${res.getContentText().slice(0, 200)}`);
+      } else {
+        patched++;
+        if (draft.paymentDate) Logger.log(`  ✔ ${draft.docId} paymentDate=${draft.paymentDate} 동기화`);
+      }
+      if ((i + 1) % 50 === 0) { Logger.log(`  ${i + 1}/${drafts.length}`); Utilities.sleep(300); }
+    } catch(e) {
+      fail++;
+      Logger.log(`  예외 [${draft.docId}]: ${e.message}`);
+    }
+  });
+  Logger.log(`=== 완료: 패치 ${patched}건 / 실패 ${fail}건 ===`);
+}
+
+// ─── 단일 문서 drafts vs drafts_index 미러 대조 (백필 전/후 검증) ──
+function verifyMirror(docId) {
+  const get = (col) => {
+    const res = UrlFetchApp.fetch(`${FIRESTORE_BASE}/${col}/${docId}`, {
+      headers: { Authorization: `Bearer ${getToken()}` }, muteHttpExceptions: true
+    });
+    if (res.getResponseCode() >= 300) return null;
+    return firestoreToObj(JSON.parse(res.getContentText()).fields);
+  };
+  const src = get('drafts'), idx = get('drafts_index');
+  Logger.log(`[${docId}] drafts.paymentDate=${src && src.paymentDate} | drafts_index.paymentDate=${idx && idx.paymentDate}`);
+  MIRROR_FIELDS.forEach(k => {
+    const a = src ? src[k] : undefined, b = idx ? idx[k] : undefined;
+    if (JSON.stringify(a) !== JSON.stringify(b)) Logger.log(`  ⚠ drift ${k}: drafts=${JSON.stringify(a)} index=${JSON.stringify(b)}`);
+  });
+}
