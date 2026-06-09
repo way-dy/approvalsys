@@ -1,10 +1,11 @@
 # 중요 이슈 기록 (approvalsys)
 
-> 50줄 초과 시 `issues-archive-YYYY.md`로 오래된 항목 이관.
+> 50줄 초과 시 `issues-archive-YYYY.md`로 오래된 항목 이관. (2026-04-27 재인증 건 → `issues-archive-2026.md`)
 
-- **2026-04-27 — 대외비 재인증 세션 탈취 (수정·배포)**
-  - `signInWithPopup`은 팝업에서 다른 계정 선택 시 auth state를 silently 교체 → 다른 회사 계정으로 대외비 열람 가능.
-  - 수정: `reauthenticateWithPopup(auth.currentUser, provider)` + `isReauthInProgress` 플래그 race 방어 + user-mismatch 시 강제 로그아웃. (`public/index.html` 77, 134, 285–296, 1959–1986)
+- **2026-06-09 — 지급 완료 문서가 회계 큐에서 안 빠짐 = drafts_index 미러 paymentDate drift (GAS 백필로 해소)**
+  - 증상: 2026-0245(2/27 지급)이 상세모달엔 "지급 완료"인데 회계 지급처리 큐에 잔류. 원인: `savePaymentDate`의 `drafts_index` 동기화 라인은 커밋 `a89e431`(2026-03-12) 도입 → 그 이전 지급분은 `drafts`에만 기록, 미러 `paymentDate=null`. 자가복구 `_supplementFromDrafts`는 *인덱스 누락* 문서만 치유, *필드 stale*은 방치.
+  - 진단: `git log -S "updateIndexDoc(docId, { paymentDate"` 로 도입일(3/12) vs 문서 처리일(2/27) 대조 → 확정. `verifyMirror('2026-0245')` 로그가 `index.paymentDate=null` 실증.
+  - 해결: `gas/_archive/migrate-drafts-index/Code.js`에 `backfillMirrorFields()`(미러 7필드만 `updateMask` PATCH·멱등) + `verifyMirror`/`checkStuckDoc` 추가. 편집기 1회 실행 → **697건 동기화·실패 0**. going-forward 코드 정상(코드 배포 불필요). 커밋 `b2ad07c`,`72dce7c`.
 
 - **2026-05-04 — 관리자 패널 수정 후 리스트 stale (수정·배포)**
   - `adminSaveApprovalStatus`가 `updateIndexDoc`(화이트리스트 부분 update)로 처리 → 결재자 변경이 인덱스에 미반영. not-found fallback `setDoc`은 갱신 *이전* `draftCache` 기반이라 stale.
