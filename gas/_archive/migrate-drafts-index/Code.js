@@ -192,6 +192,7 @@ function backfillMirrorFields() {
 
   const mask = MIRROR_FIELDS.map(k => `updateMask.fieldPaths=${k}`).join('&');
   let patched = 0, fail = 0;
+  const paidDocs = [], failed = [];
   drafts.forEach((draft, i) => {
     try {
       const fields = {};
@@ -205,19 +206,27 @@ function backfillMirrorFields() {
         muteHttpExceptions: true
       });
       if (res.getResponseCode() >= 300) {
-        fail++;
+        fail++; failed.push(draft.docId);
         Logger.log(`  실패 [${draft.docId}] ${res.getResponseCode()}: ${res.getContentText().slice(0, 200)}`);
       } else {
         patched++;
-        if (draft.paymentDate) Logger.log(`  ✔ ${draft.docId} paymentDate=${draft.paymentDate} 동기화`);
+        if (draft.paymentDate) { paidDocs.push(`${draft.docId}=${draft.paymentDate}`); Logger.log(`  ✔ ${draft.docId} paymentDate=${draft.paymentDate} 동기화`); }
       }
       if ((i + 1) % 50 === 0) { Logger.log(`  ${i + 1}/${drafts.length}`); Utilities.sleep(300); }
     } catch(e) {
-      fail++;
+      fail++; failed.push(draft.docId);
       Logger.log(`  예외 [${draft.docId}]: ${e.message}`);
     }
   });
   Logger.log(`=== 완료: 패치 ${patched}건 / 실패 ${fail}건 ===`);
+  return { total: drafts.length, patched: patched, fail: fail, paidCount: paidDocs.length, paidDocs: paidDocs, failed: failed };
+}
+
+// 편집기에서 인자 없이 클릭 실행용 — 신고된 문서(2026-0245) 전/후 검증
+function checkStuckDoc() {
+  const r = verifyMirror('2026-0245');
+  Logger.log('결과: ' + JSON.stringify(r));
+  return r;
 }
 
 // ─── 단일 문서 drafts vs drafts_index 미러 대조 (백필 전/후 검증) ──
@@ -231,8 +240,18 @@ function verifyMirror(docId) {
   };
   const src = get('drafts'), idx = get('drafts_index');
   Logger.log(`[${docId}] drafts.paymentDate=${src && src.paymentDate} | drafts_index.paymentDate=${idx && idx.paymentDate}`);
+  const drift = [];
   MIRROR_FIELDS.forEach(k => {
     const a = src ? src[k] : undefined, b = idx ? idx[k] : undefined;
-    if (JSON.stringify(a) !== JSON.stringify(b)) Logger.log(`  ⚠ drift ${k}: drafts=${JSON.stringify(a)} index=${JSON.stringify(b)}`);
+    if (JSON.stringify(a) !== JSON.stringify(b)) {
+      drift.push(`${k}: drafts=${JSON.stringify(a)} index=${JSON.stringify(b)}`);
+      Logger.log(`  ⚠ drift ${k}: drafts=${JSON.stringify(a)} index=${JSON.stringify(b)}`);
+    }
   });
+  return {
+    docId: docId,
+    draftsPaymentDate: src ? (src.paymentDate || null) : 'NO_DRAFT',
+    indexPaymentDate: idx ? (idx.paymentDate || null) : 'NO_INDEX',
+    drift: drift
+  };
 }
