@@ -2422,6 +2422,11 @@
                 btnArea.innerHTML += `<button onclick="deleteConfidentialDraft('${draft.docId}')" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 ml-2 text-sm flex items-center gap-1 shadow-sm" title="슈퍼관리자: 대외비 영구 삭제"><i class="bi bi-trash"></i> 삭제</button>`;
             }
 
+            // ── 일반 기안 삭제 버튼 (슈퍼관리자 + 비대외비 + 전체기안 탭 — 최종승인 이후에도) ──
+            if (!isConfidentialDraft && isSuper && getActiveTabTarget() === 'allDrafts') {
+                btnArea.innerHTML += `<button onclick="deleteDraft('${draft.docId}')" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 ml-2 text-sm flex items-center gap-1 shadow-sm" title="슈퍼관리자: 기안 영구 삭제 (최종승인 후 포함)"><i class="bi bi-trash"></i> 삭제</button>`;
+            }
+
             if (draft.drafterEmail === currentUser.email && !draft.paymentDate && draft.approval2Status !== '결재' && draft.approval1Status !== '반려' && draft.approval2Status !== '반려') {
                 btnArea.innerHTML += `<button onclick="triggerRemind('${draft.docId}')" class="bg-orange-500 text-white px-4 py-2 rounded hover:bg-orange-600 ml-2 text-sm flex items-center gap-1 shadow-sm"><i class="bi bi-bell"></i> 독촉</button>`;
             }
@@ -2642,6 +2647,83 @@
                 renderWithFilter(getActiveTabTarget());
             } catch(e) {
                 console.error('[deleteConfidential] 삭제 실패:', e);
+                showToast('삭제 오류: ' + (e?.message || e), 'error');
+            } finally {
+                hideLoading();
+            }
+        };
+
+        // =========================================================================
+        // [슈퍼관리자] 일반 기안 영구 삭제 (전체기안 — 최종승인 이후에도)
+        // =========================================================================
+        // 가드: 슈퍼관리자 + 비대외비. 대외비는 deleteConfidentialDraft 사용.
+        // 2단계 확인(confirm + 문서번호 prompt). 삭제 순서: Storage 첨부 → drafts_index → drafts → 캐시 정리.
+        window.deleteDraft = async (docId) => {
+            if (!isSuperAdmin(currentUser)) {
+                showToast('슈퍼관리자만 기안 삭제가 가능합니다.', 'error');
+                return;
+            }
+            const draft = draftCache[docId];
+            if (!draft) { showToast('문서 정보를 찾을 수 없습니다.', 'error'); return; }
+            if (draft.category === '대외비') {
+                showToast('대외비 문서는 대외비 삭제 기능을 사용하세요.', 'error');
+                return;
+            }
+
+            // ── 2단계 확인 ──
+            const ok1 = confirm(`이 기안을 영구 삭제합니다. 최종승인된 문서도 삭제됩니다.\n\n문서번호: ${docId}\n제목: ${draft.title}`);
+            if (!ok1) return;
+            const typed = prompt(`확인을 위해 문서번호를 그대로 입력하세요.\n(예: ${docId})`);
+            if (typed === null) return;
+            if (typed.trim() !== docId) {
+                showToast('문서번호가 일치하지 않아 삭제를 취소했습니다.', 'error');
+                return;
+            }
+
+            try {
+                showLoading('기안 삭제 중...');
+
+                // 1) Storage 첨부파일 모두 삭제
+                if (Array.isArray(draft.attachments)) {
+                    for (const att of draft.attachments) {
+                        const url = att?.url;
+                        if (!url) continue;
+                        try {
+                            const fileRef = ref(storage, url);
+                            await deleteObject(fileRef);
+                        } catch(fileErr) {
+                            console.warn('[deleteDraft] 첨부 삭제 실패:', att?.name, fileErr?.code || fileErr);
+                        }
+                    }
+                }
+
+                // 2) drafts_index 삭제
+                try {
+                    await deleteDoc(doc(db, 'drafts_index', docId));
+                } catch(idxErr) {
+                    console.warn('[deleteDraft] drafts_index 삭제 실패:', idxErr);
+                }
+
+                // 3) drafts 삭제 (메인)
+                await deleteDoc(doc(db, 'drafts', docId));
+
+                // 4) 메모리/캐시 정리
+                delete draftCache[docId];
+                const idx = allFetchedData.findIndex(d => d.docId === docId);
+                if (idx !== -1) allFetchedData.splice(idx, 1);
+                const fidx = filteredDisplayData.findIndex(d => d.docId === docId);
+                if (fidx !== -1) filteredDisplayData.splice(fidx, 1);
+                localStorage.removeItem(CACHE_KEYS.DRAFTS);
+
+                // 백그라운드 새로고침이 stale 데이터로 부활시키지 않도록 10초 보호창
+                recentlyUpdatedDocIds.add(docId);
+                setTimeout(() => recentlyUpdatedDocIds.delete(docId), 10000);
+
+                closeModal('modal-detail');
+                showToast('기안을 영구 삭제했습니다.');
+                renderWithFilter(getActiveTabTarget());
+            } catch(e) {
+                console.error('[deleteDraft] 삭제 실패:', e);
                 showToast('삭제 오류: ' + (e?.message || e), 'error');
             } finally {
                 hideLoading();
