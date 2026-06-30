@@ -67,7 +67,10 @@ service cloud.firestore {
                       || resource.data.approver1Email == request.auth.token.email
                       || resource.data.approver2Email == request.auth.token.email
                     );
-      allow create: if isCompanyUser();
+      // 🚫 신규 기안 생성 차단 (2026-06-30 컷오버) — 기안은 OPS(dy-ops)로 이전.
+      //   레거시에서 새 기안 만들면 dyops와 데이터 갈라져 혼선 → create 봉쇄.
+      //   조회(read)·기존 기안 결재(update)는 유지(보관·진행분 마무리).
+      allow create: if false;
       allow update: if isCompanyUser()
                     && (
                       (resource.data.category != '대외비'
