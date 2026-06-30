@@ -2422,8 +2422,8 @@
                 btnArea.innerHTML += `<button onclick="deleteConfidentialDraft('${draft.docId}')" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 ml-2 text-sm flex items-center gap-1 shadow-sm" title="슈퍼관리자: 대외비 영구 삭제"><i class="bi bi-trash"></i> 삭제</button>`;
             }
 
-            // ── 일반 기안 삭제 버튼 (슈퍼관리자 + 비대외비 + 전체기안 탭 — 최종승인 이후에도) ──
-            if (!isConfidentialDraft && isSuper && getActiveTabTarget() === 'allDrafts') {
+            // ── 일반 기안 삭제 버튼 (슈퍼관리자 + 비대외비 전 탭 — 최종승인 이후에도) ──
+            if (!isConfidentialDraft && isSuper) {
                 btnArea.innerHTML += `<button onclick="deleteDraft('${draft.docId}')" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 ml-2 text-sm flex items-center gap-1 shadow-sm" title="슈퍼관리자: 기안 영구 삭제 (최종승인 후 포함)"><i class="bi bi-trash"></i> 삭제</button>`;
             }
 
