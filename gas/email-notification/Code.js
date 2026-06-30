@@ -4,8 +4,8 @@
 const SPREADSHEET_ID = "1t5SZJ-6DQNR6G-2gQMzo2P0lWtyiIV-vugwiLe-mqz4"; 
 const SHEET_NAME = "imported"; // 데이터를 읽어올 시트 이름
 
-// 2. 앱 접속 주소
-const APP_URL = "https://approval-8ef73.web.app";
+// 2. 앱 접속 주소 — 신규 시스템(OPS)으로 이전(2026-07-01). 결재는 dyops 의사결정에서 처리.
+const APP_URL = "https://dy-ops.web.app/decisions";
 // ============================================================================
 
 /**
@@ -178,8 +178,8 @@ function sendEmailInternal(type, draft, recipients) {
   // [수정 포인트] 결재 행동이 필요한 타입인 경우 URL에 파라미터 추가
   let targetUrl = APP_URL;
   if (type === 'NEW' || type === 'REMIND' || type === 'REMIND_SUMMARY') {
-    // 기존 URL 뒤에 ?menu=toApprove 를 붙임
-    targetUrl = APP_URL + "?menu=toApprove";
+    // 신규 시스템(OPS) 결재 대기함으로 연결
+    targetUrl = APP_URL + "/approve";
   }
 
   // APP_URL 대신 수정된 targetUrl을 템플릿에 전달
