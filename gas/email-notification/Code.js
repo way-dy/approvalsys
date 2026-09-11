@@ -9,11 +9,28 @@ const APP_URL = "https://dy-ops.web.app/decisions";
 // ============================================================================
 
 /**
- * [트리거 함수] 매일 아침 실행될 함수
- * - 시트를 확인하여 미결재 상태인 건을 결재자별로 집계(Count)합니다.
- * - 개별 건마다 메일을 보내지 않고, 1인당 1통의 '요약 리마인드' 메일을 발송합니다.
+ * [트리거 함수] 매일 아침 실행될 함수 — 🔴 2026-09-11 **은퇴**. 아무것도 하지 않습니다.
+ *
+ * 미결재 독촉은 dyops 로 이관했습니다:
+ *   `app/dyops/functions/src/notifyPendingApprovals.ts` (평일 08:20 KST · dy@ 발송)
+ *
+ * 🔴 **왜 옮겼나** — 이 함수는 구글시트 `imported` 의 `1차결재상태` 칸 하나로 대상을 정했는데,
+ *   ① 그 시트에 **검토 컬럼이 없어** 팀장 검토 대기 건을 「1차 결재 대기」로 셌고
+ *      (2026-09-11 실측: way 미결 3건이 전부 검토 대기)
+ *   ② `s1==='결재'` 만 봐서 **전결 건의 2차 결재자**에게는 독촉이 영영 안 갔으며
+ *   ③ 같은 날 시트에서 대외비를 빼자(130행 노출 차단) **대외비 기안이 사각지대**가 됐다(5건).
+ *   dyops 는 Firestore 를 직접 읽어 셋 다 구조적으로 없앤다.
+ *
+ * 🔴 **이 return 을 지우지 마십시오** — 트리거가 아직 살아 있습니다. 되살리면 결재자들이
+ *   아침에 **같은 내용 메일을 2통** 받습니다. 되돌릴 일이 생기면 dyops 쪽을 먼저 끄십시오
+ *   (`meta/notify_config.pending_reminder_disabled = true` — 코드 배포 없이 멈춥니다).
+ *
+ * 아래 본문은 이관 대조용으로 남겨 둡니다(도달 불가).
  */
 function sendDailyPendingReminders() {
+  console.log('[Daily Remind] dyops notifyPendingApprovals 로 이관됨(2026-09-11) — 발송하지 않습니다.');
+  return;
+
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheet = ss.getSheetByName(SHEET_NAME);
   if (!sheet) {
