@@ -2,6 +2,8 @@
 
 > 50줄 초과 시 `issues-archive-YYYY.md`로 오래된 항목 이관. (2026-04-27 재인증 건 → `issues-archive-2026.md`)
 
+- **2026-09-14 — 배포 게이트 도입(`scripts/run-tests.cjs`, firebase.json hosting predeploy)** — 문법·onclick 배선·drafts↔drafts_index 미러·도메인/재인증 가드 4종. 도입 시 발견한 미해결 2건(가드에서 제외): ① `index.html:769` `_fetchMyDraftsIndex` 폴백 쿼리가 `limit(MY_LIMIT)` 에 `orderBy` 없음 → 기안 200건 초과자 최신 누락 가능. ② `getDraftStatus`(:2111) 가 `approval1Status === '결재'` 직접 비교 → 전결 계정 과거 문서 뱃지가 '대기'로 표시(권한 영향 없음, 판단 필요).
+
 - **2026-06-09 — 지급 완료 문서가 회계 큐에서 안 빠짐 = drafts_index 미러 paymentDate drift (GAS 백필로 해소)**
   - 증상: 2026-0245(2/27 지급)이 상세모달엔 "지급 완료"인데 회계 지급처리 큐에 잔류. 원인: `savePaymentDate`의 `drafts_index` 동기화 라인은 커밋 `a89e431`(2026-03-12) 도입 → 그 이전 지급분은 `drafts`에만 기록, 미러 `paymentDate=null`. 자가복구 `_supplementFromDrafts`는 *인덱스 누락* 문서만 치유, *필드 stale*은 방치.
   - 진단: `git log -S "updateIndexDoc(docId, { paymentDate"` 로 도입일(3/12) vs 문서 처리일(2/27) 대조 → 확정. `verifyMirror('2026-0245')` 로그가 `index.paymentDate=null` 실증.

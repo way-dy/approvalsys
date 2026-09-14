@@ -1,5 +1,7 @@
 {
   "hosting": {
+    "//": "🔴 배포 게이트. `firebase deploy --only hosting` 직접 호출이 위임돼 있어 npm script 에 걸면 빠져나간다. 실패하면 배포가 중단된다 — 게이트를 지우지 말고 원인을 가른다.",
+    "predeploy": ["node scripts/run-tests.cjs"],
     "public": "public",
     "ignore": [
       "firebase.json",
